@@ -37,6 +37,23 @@ services:
     networks:
       - default
 
+  localstack:
+    image: localstack/localstack:3.8.1
+    container_name: 4frames-localstack
+    ports:
+      - '4566:4566'
+    environment:
+      - SERVICES=s3
+      - AWS_DEFAULT_REGION=${AWS_REGION:-us-east-1}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-4frames-videos}
+    volumes:
+      - localstack_data:/var/lib/localstack
+      - ./infra/localstack/init:/etc/localstack/init/ready.d
+    networks:
+      - default
+
 volumes:
   postgres_data:
+    driver: local
+  localstack_data:
     driver: local
