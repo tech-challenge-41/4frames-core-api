@@ -1,3 +1,4 @@
+import cors from 'cors';
 import express from 'express';
 import swaggerUi from 'swagger-ui-express';
 
@@ -19,6 +20,7 @@ export async function HTTPInitialize() {
 
   const PORT = Number(process.env.PORT) || 3000;
 
+  app.use(cors({ origin: process.env.CORS_ORIGIN?.split(',') ?? true }));
   app.use(requestCorrelationMiddleware);
   app.use(createHttpRequestLoggerMiddleware());
 

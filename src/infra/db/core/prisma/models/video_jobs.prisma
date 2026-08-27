@@ -1,0 +1,17 @@
+enum VideoJobStatus {
+  UPLOAD_PENDING
+  QUEUED
+  PROCESSING
+  DONE
+  FAILED
+  EXPIRED
+}
+
+model video_jobs {
+  id          Int            @id @default(autoincrement())
+  user_id     Int
+  file_name   String
+  status      VideoJobStatus @default(UPLOAD_PENDING)
+  created_at  DateTime       @default(now())
+  updated_at  DateTime       @updatedAt
+}

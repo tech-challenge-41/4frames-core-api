@@ -1,5 +1,6 @@
 import { authPaths } from './paths/auth';
 import { systemPaths } from './paths/system';
+import { videoPaths } from './paths/video';
 import { responses } from './responses';
 import { schemas } from './schemas/';
 
@@ -24,14 +25,26 @@ export const openapi = {
     {
       name: 'system',
       description: 'Endpoints de sistema'
+    },
+    {
+      name: 'video',
+      description: 'Upload e processamento de vídeos'
     }
   ],
   paths: {
     ...authPaths,
-    ...systemPaths
+    ...systemPaths,
+    ...videoPaths
   },
   components: {
     schemas,
-    responses
+    responses,
+    securitySchemes: {
+      bearerAuth: {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT'
+      }
+    }
   }
 };
