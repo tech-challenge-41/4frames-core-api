@@ -1,4 +1,4 @@
-import { PutObjectCommand, type S3Client } from '@aws-sdk/client-s3';
+import { HeadObjectCommand, PutObjectCommand, S3ServiceException, type S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 import {
@@ -34,5 +34,21 @@ export class S3PresignedUrlService implements IVideoStorageService {
     const uploadUrl = await getSignedUrl(this.client, command, { expiresIn });
 
     return { uploadUrl, expiresIn };
+  }
+
+  public async headObject(key: string): Promise<boolean> {
+    try {
+      await this.client.send(new HeadObjectCommand({ Bucket: this.bucketName, Key: key }));
+      return true;
+    } catch (error) {
+      if (
+        error instanceof S3ServiceException &&
+        (error.$metadata.httpStatusCode === 404 || error.name === 'NotFound')
+      ) {
+        return false;
+      }
+
+      throw error;
+    }
   }
 }

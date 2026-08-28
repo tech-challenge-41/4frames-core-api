@@ -4,13 +4,9 @@ import { type IVideoStorageService } from '@/domain/ports/service/video-storage.
 import { type IUseCase } from '@/domain/ports/use-case';
 
 import { type CreateVideoJobInputDTO, type CreateVideoJobOutputDTO } from './create-video-job.dto';
+import { buildVideoSourceKey, contentTypeToExtension } from '../video-storage-key';
 
 const UPLOAD_URL_EXPIRES_IN_SECONDS = 5 * 60;
-
-const CONTENT_TYPE_TO_EXTENSION: Record<string, string> = {
-  'video/mp4': 'mp4',
-  'video/quicktime': 'mov'
-};
 
 interface CreateVideoJobUseCaseDependencies {
   videoJobService: IVideoJobService;
@@ -27,15 +23,15 @@ export class CreateVideoJobUseCase implements IUseCase {
   }
 
   public async execute({ userId, fileName, contentType }: CreateVideoJobInputDTO): Promise<CreateVideoJobOutputDTO> {
-    const extension = CONTENT_TYPE_TO_EXTENSION[contentType];
+    const extension = contentTypeToExtension(contentType);
 
     if (!extension) {
       throw new VideoValidationError('Unsupported content type', { contentType });
     }
 
-    const job = await this.videoJobService.createUploadPendingJob(userId, fileName);
+    const job = await this.videoJobService.createUploadPendingJob(userId, fileName, contentType);
 
-    const key = `videos/${userId}/${job.id}/source.${extension}`;
+    const key = buildVideoSourceKey(userId, job.id, extension);
 
     const { uploadUrl, expiresIn } = await this.videoStorageService.generatePresignedUploadUrl(
       key,

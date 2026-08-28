@@ -5,4 +5,5 @@ export interface PresignedUploadUrl {
 
 export interface IVideoStorageService {
   generatePresignedUploadUrl(key: string, contentType: string, expiresIn: number): Promise<PresignedUploadUrl>;
+  headObject(key: string): Promise<boolean>;
 }

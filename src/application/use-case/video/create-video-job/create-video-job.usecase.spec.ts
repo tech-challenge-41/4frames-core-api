@@ -11,11 +11,14 @@ describe('CreateVideoJobUseCase', () => {
 
   beforeEach(() => {
     videoJobService = {
-      createUploadPendingJob: jest.fn()
+      createUploadPendingJob: jest.fn(),
+      findById: jest.fn(),
+      updateStatus: jest.fn()
     };
 
     videoStorageService = {
-      generatePresignedUploadUrl: jest.fn()
+      generatePresignedUploadUrl: jest.fn(),
+      headObject: jest.fn()
     };
 
     useCase = new CreateVideoJobUseCase({
@@ -29,6 +32,7 @@ describe('CreateVideoJobUseCase', () => {
       id: 42,
       userId: 1,
       fileName: 'my-video.mp4',
+      contentType: 'video/mp4',
       status: 'UPLOAD_PENDING'
     });
 
@@ -44,7 +48,7 @@ describe('CreateVideoJobUseCase', () => {
       contentType: 'video/mp4'
     });
 
-    expect(videoJobService.createUploadPendingJob).toHaveBeenCalledWith(1, 'my-video.mp4');
+    expect(videoJobService.createUploadPendingJob).toHaveBeenCalledWith(1, 'my-video.mp4', 'video/mp4');
     expect(videoStorageService.generatePresignedUploadUrl).toHaveBeenCalledWith(
       'videos/1/42/source.mp4',
       'video/mp4',
@@ -62,6 +66,7 @@ describe('CreateVideoJobUseCase', () => {
       id: 7,
       userId: 5,
       fileName: 'clip.mov',
+      contentType: 'video/quicktime',
       status: 'UPLOAD_PENDING'
     });
 
