@@ -30,22 +30,22 @@ Três pontos pesaram na revisão:
 
 Os serviços gerenciados da AWS dão lugar a equivalentes locais, e a orquestração do ADR-001 continua em Kubernetes:
 
-| ADR-001                                 | Substituto local                                                                        | Situação em 17/09                           |
-| --------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------- |
-| EKS                                     | Cluster Kubernetes local                                                                | Previsto                                    |
-| ALB (AWS Load Balancer Controller)      | Ingress controller do cluster                                                           | Previsto                                    |
-| HPA na API                              | HPA na API, com metrics-server                                                          | Previsto                                    |
-| KEDA (scaler `aws-sqs-queue`) no worker | KEDA com o mesmo scaler, apontado para o LocalStack (`awsEndpoint`)                     | Previsto                                    |
-| Segredos no Kubernetes + IRSA           | Secrets e ConfigMaps; credenciais fixas do LocalStack no lugar do IRSA                  | Previsto                                    |
-| ECR + deploy no EKS                     | Imagens no GitHub Container Registry por tag `release-*`; deploy no cluster local       | Previsto                                    |
-| S3 com Event Notifications              | LocalStack S3: bucket, CORS e notificação `videos/` → SQS                               | Implementado                                |
-| SQS + DLQ                               | LocalStack SQS, redrive para a DLQ após 3 recebimentos                                  | Implementado                                |
-| RDS PostgreSQL 16                       | Container `postgres:16`                                                                 | Implementado                                |
-| ElastiCache Redis                       | Container `redis:7`                                                                     | Container no ar; uso pelos apps previsto    |
-| SES                                     | Mailpit (SMTP local com caixa web)                                                      | Container no ar; uso pelo notifier previsto |
-| Terraform                               | Scripts de init do LocalStack, migrations do Prisma e manifestos Kubernetes versionados | Scripts e migrations implementados          |
-| CloudFront no download                  | URL pré-assinada de GET do S3                                                           | Previsto                                    |
-| OpenTelemetry + Datadog + CloudWatch    | Prometheus + Grafana                                                                    | Previsto                                    |
+| ADR-001                                 | Substituto local                                                                        | Situação em 17/09                            |
+| --------------------------------------- | --------------------------------------------------------------------------------------- | -------------------------------------------- |
+| EKS                                     | Cluster Kubernetes local                                                                | Previsto                                     |
+| ALB (AWS Load Balancer Controller)      | Ingress controller do cluster                                                           | Previsto                                     |
+| HPA na API                              | HPA na API, com metrics-server                                                          | Previsto                                     |
+| KEDA (scaler `aws-sqs-queue`) no worker | KEDA com o mesmo scaler, apontado para o LocalStack (`awsEndpoint`)                     | Previsto                                     |
+| Segredos no Kubernetes + IRSA           | Secrets e ConfigMaps; credenciais fixas do LocalStack no lugar do IRSA                  | Previsto                                     |
+| ECR + deploy no EKS                     | Imagens no GitHub Container Registry por tag `release-*`; deploy no cluster local       | Previsto                                     |
+| S3 com Event Notifications              | LocalStack S3: bucket, CORS e notificação `videos/` → SQS                               | Implementado                                 |
+| SQS + DLQ                               | LocalStack SQS, redrive para a DLQ após 3 recebimentos                                  | Implementado                                 |
+| RDS PostgreSQL 16                       | Container `postgres:16`                                                                 | Implementado                                 |
+| ElastiCache Redis                       | Container `redis:7`                                                                     | Implementado (progresso e eventos do worker) |
+| SES                                     | Mailpit (SMTP local com caixa web)                                                      | Container no ar; uso pelo notifier previsto  |
+| Terraform                               | Scripts de init do LocalStack, migrations do Prisma e manifestos Kubernetes versionados | Scripts e migrations implementados           |
+| CloudFront no download                  | URL pré-assinada de GET do S3                                                           | Previsto                                     |
+| OpenTelemetry + Datadog + CloudWatch    | Prometheus + Grafana                                                                    | Previsto                                     |
 
 Consequências diretas no código:
 
@@ -111,7 +111,7 @@ A mesma migration adiciona as colunas que o processamento precisa (`file_size`, 
 
 O worker segue o projeto base apresentado aos investidores: `ffmpeg -vf fps=1`, um frame por segundo, em PNG, com nomes
 `frame_0001.png`, `frame_0002.png`… na raiz do zip. O ADR-001 falava em "1 frame a cada N segundos"; o valor fica em
-`FRAME_FPS=1` e `FRAME_FORMAT=png`. Situação: previsto, com o worker.
+`FRAME_FPS=1` e `FRAME_FORMAT=png`. Situação: implementado no `apps/worker`.
 
 ### 2.6. Qualidade e entrega
 

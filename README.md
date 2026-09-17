@@ -18,7 +18,7 @@ que mudou em relação ao ADR-001.
 | Pacote            | Nome                | O que é                                                                                          |
 | ----------------- | ------------------- | ------------------------------------------------------------------------------------------------ |
 | `apps/api`        | `@4frames/api`      | API REST (Express 5): login JWT, jobs de vídeo e URLs pré-assinadas                              |
-| `apps/worker`     | `@4frames/worker`   | Worker de processamento (scaffold; consumer SQS e ffmpeg no Card 2)                              |
+| `apps/worker`     | `@4frames/worker`   | Worker: consome a fila SQS, extrai os frames com ffmpeg, gera o zip e publica o progresso        |
 | `apps/notifier`   | `@4frames/notifier` | Notificador por e-mail (scaffold; assinatura de eventos no Card 4)                               |
 | `packages/shared` | `@4frames/shared`   | Prisma (schema, migrations, seeds e client), env, logger, contratos de job, clientes AWS e Redis |
 | `infra/`          | –                   | Scripts de init do LocalStack                                                                    |
@@ -45,8 +45,8 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Sobe Postgres, Redis, Mailpit, LocalStack, o serviço `migrate` (migrations e seed, depois encerra) e a
-API em modo desenvolvimento em `http://localhost:3000`.
+Sobe Postgres, Redis, Mailpit, LocalStack, o serviço `migrate` (migrations e seed, depois encerra), a
+API em modo desenvolvimento em `http://localhost:3000` e o worker.
 
 ### Apps no host
 
@@ -117,14 +117,20 @@ aws --endpoint-url=http://localhost:4566 sqs receive-message --queue-url http://
 ## Docker
 
 O `docker-compose.yml` usa a imagem de desenvolvimento (`apps/api/dev.Dockerfile`) nos serviços `migrate`
-e `api`. O entrypoint instala as dependências, gera o Prisma Client, compila o `@4frames/shared` e executa
-o comando do serviço.
+e `api`, e `apps/worker/dev.Dockerfile` (a mesma base, com ffmpeg) no `worker`. O entrypoint instala as
+dependências, gera o Prisma Client, compila o `@4frames/shared` e executa o comando do serviço. `api` e
+`worker` sobem juntos depois do `migrate`; o worker pula a geração e a compilação (`SKIP_SHARED_BUILD=1`)
+para os dois não reescreverem os mesmos arquivos ao mesmo tempo.
 
-A imagem de produção é construída a partir da raiz do monorepo:
+As imagens de produção são construídas a partir da raiz do monorepo:
 
 ```bash
 docker build -f apps/api/Dockerfile -t 4frames-api .
+docker build -f apps/worker/Dockerfile -t 4frames-worker .
 ```
+
+A imagem do worker instala `ffmpeg` (como o projeto base), roda como usuário `node` e expõe a porta `9100`
+(`/healthz`).
 
 ## Endpoints
 
@@ -144,11 +150,47 @@ Todas as rotas de `/videos` exigem `Authorization: Bearer <token>`. O `jobId` é
 3. `POST /videos/{jobId}/complete` → confirma o objeto no bucket e marca `QUEUED`.
 4. `GET /videos/{jobId}` → consulta o status a qualquer momento (`UPLOAD_PENDING` → `QUEUED` → `PROCESSING` → `DONE`/`FAILED`/`EXPIRED`).
 
-**Ainda não implementado** (ver ADR-001, seção 2.2): o processamento de fato do vídeo
-(worker consumindo SQS, ffmpeg extraindo frames, geração do `.zip`), a listagem de jobs
-do usuário (`GET /videos`) e o download do resultado
-(`GET /videos/{jobId}/download`). Hoje um job fica parado em `QUEUED` após a
-confirmação do upload.
+O processamento é feito pelo worker (ver [Worker](#worker)). **Ainda não implementado** (ver ADR-001,
+seção 2.2): a listagem de jobs do usuário (`GET /videos`) e o download do resultado
+(`GET /videos/{jobId}/download`). O zip já fica no bucket em `zips/{userId}/{jobId}.zip`.
+
+## Worker
+
+O `apps/worker` consome a fila `4frames-video-uploads`, uma mensagem por vez, e processa cada vídeo com a
+mesma regra do projeto base: `ffmpeg -vf fps=1`, um PNG por segundo (`frame_0001.png`, `frame_0002.png`…),
+todos na raiz do zip.
+
+1. Ignora o `s3:TestEvent`, lê `userId` e `jobId` da chave e descarta jobs já `DONE`, `FAILED` ou `EXPIRED`.
+   Se o upload ainda não foi confirmado (`UPLOAD_PENDING`), espera o `complete` por até 30 s e, se não vier,
+   devolve a mensagem à fila.
+2. Marca `PROCESSING` com atualização condicional (entrega duplicada não processa duas vezes), baixa o vídeo,
+   valida com ffprobe (MP4/MOV, trilha de vídeo, até `MAX_VIDEO_DURATION_SECONDS`) e extrai os frames.
+3. Grava `frames/{userId}/{jobId}/…` e `zips/{userId}/{jobId}.zip` no S3, depois `DONE` no banco
+   (`zip_key`, `frame_count`, `duration_seconds`) e só então publica `job.done` no Redis.
+
+- **Progresso**: `job:{jobId}` (Pub/Sub) e `progress:{jobId}` (percentual, TTL de 1 h), no máximo uma
+  publicação por ponto percentual e por segundo. Eventos terminais também saem em `jobs.events`.
+- **Vídeo inválido**: `FAILED` com `failure_reason` legível, `job.failed` e a mensagem é apagada.
+- **Falha transiente** (S3, banco, ffmpeg morto): a mensagem volta à fila em 60 s. Depois de 3 recebimentos
+  vai para a DLQ, e o próprio worker marca o job `FAILED` com `Falha após 3 tentativas`.
+- **Visibilidade**: enquanto processa, o worker renova a visibilidade da mensagem a cada
+  `VISIBILITY_TIMEOUT_SECONDS / 2`. Se o worker cair, a mensagem reaparece e outro worker retoma o job.
+- **Encerramento**: no SIGTERM (`docker compose stop worker`, scale-down do KEDA) para de receber, termina o
+  job atual e sai, dentro de `WORKER_SHUTDOWN_TIMEOUT_SECONDS`.
+- **Saúde**: `GET http://localhost:9100/healthz` responde 200 enquanto o laço de consumo está vivo, e 503
+  quando parou ou ficou mais de 60 s sem sinal.
+
+No Compose, o worker roda compilado, sem hot reload: o `ts-node-dev` sai ao receber SIGTERM sem esperar o
+processo filho, o que impediria o encerramento gracioso. Depois de mudar o código, rode
+`docker compose restart worker`. `pnpm dev:worker` no host também funciona, mas exige `ffmpeg` e `ffprobe` no
+PATH.
+
+Os testes com vídeo de amostra (`apps/worker/test/integration`) são pulados quando não há ffmpeg no PATH.
+Para rodá-los no container:
+
+```bash
+docker compose exec worker pnpm --filter @4frames/worker test
+```
 
 ## Seeds
 
