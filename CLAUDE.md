@@ -1,50 +1,96 @@
 # 4frames-core-api — Architecture Guide
 
-Node.js + TypeScript API, Clean/Hexagonal architecture. Read this before adding or
-changing any endpoint.
+pnpm monorepo with the 4Frames backend: the API, the processing worker, the email notifier
+and a shared package. Read this before adding or changing any endpoint or package.
+
+## Monorepo layout
+
+```
+apps/
+  api/          @4frames/api       Express 5 REST API (hexagonal, see "Layers" below)
+  worker/       @4frames/worker    SQS consumer + ffmpeg (scaffold only: main.ts with graceful shutdown)
+  notifier/     @4frames/notifier  Redis subscriber + email (scaffold only: main.ts with graceful shutdown)
+packages/
+  shared/       @4frames/shared    code and contracts used by more than one app
+    prisma/                        schema.prisma, models/*.prisma, migrations/, seeds/
+    prisma.config.ts               Prisma CLI config (runs with cwd = packages/shared)
+    src/
+      env/        loadEnv, parseEnv + zod schemas; env/load.ts is a side-effect import
+      logger/     pino root factory, PinoLoggerAdapter, Logger interface
+      prisma/     prisma client singleton, buildDatabaseUrl, generated enums/types re-exported
+      jobs/       job statuses, S3 key builders/parsers, Redis channel names, job event schemas
+      aws/        createS3Client, createSqsClient
+      redis/      createRedisClient (lazyConnect)
+      process/    registerGracefulShutdown
+      generated/  Prisma Client output (gitignored, created by `pnpm db:generate`)
+infra/localstack/init/             LocalStack bootstrap scripts
+tsconfig.base.json                 compiler options shared by every package
+eslint.config.js, .prettierrc.js   one lint config for the whole repo
+docker-compose.yml, .env           one Compose file and one .env at the root
+```
+
+### Shared package rules
+
+- Put code in `packages/shared` only when two or more apps need it, or when it is a contract
+  between apps (S3 keys, Redis channels, event payloads, statuses). App-specific code stays in
+  the app. No Express, HTTP or request-scoped code in `shared`.
+- Import through subpaths, never deep paths: `@4frames/shared/prisma`, `/env`, `/logger`,
+  `/jobs`, `/aws`, `/redis`, `/process`. The root `@4frames/shared` only re-exports the light
+  modules (env, jobs, logger, process). Prisma, AWS and Redis stay behind subpaths so importing
+  a contract never opens a database connection or loads an SDK.
+- Apps resolve `@4frames/shared` at runtime and in `tsc` through the package `exports`, which
+  point to `dist`. After changing `shared`, run `pnpm --filter @4frames/shared build` (or keep
+  `pnpm dev:shared` running). Jest maps `@4frames/shared/*` straight to `packages/shared/src`,
+  so tests never need a build.
+- Every app entrypoint starts with `import '@4frames/shared/env/load';` so the root `.env` is
+  loaded before any module reads `process.env`. Variables already set (Compose, CI) win.
+- When you add a subpath, update `exports` in `packages/shared/package.json` and keep the
+  subpath name equal to the folder name under `src/` (the Jest mapper relies on that).
 
 ## Stack
 
-- Express 5, Zod (validation), Prisma/PostgreSQL, JWT (jsonwebtoken + bcrypt)
+- Express 5, Zod (validation), Prisma 7 with the `pg` driver adapter, JWT (jsonwebtoken + bcrypt)
 - `@aws-sdk/client-s3` + `@aws-sdk/s3-request-presigner` for presigned upload URLs
 - LocalStack (S3 only, for now) for local dev — see `infra/localstack/`
 - Manual DI via a `Container` singleton (no framework like InversifyJS/tsyringe)
-- Jest for tests
+- Jest + ts-jest for tests, one `jest.config.ts` per package
 
-## Layers (strict, don't cross them)
+## Layers in `apps/api/src` (strict, don't cross them)
 
 ```
-src/
-  domain/
-    ports/service/*.interface.ts   interfaces implemented by infra/services
-    ports/use-case.ts              generic IUseCase<TInput, TOutput>
-    error/domain-error.ts          DomainError + DomainErrorTypes
-  application/
-    use-case/<aggregate>/<action>/<action>.usecase.ts + .dto.ts
-    error/*.ts                     ApplicationError subclasses (HTTP-facing errors)
-  infra/
-    http/controller/<aggregate>/<aggregate>.controller.ts   implements IController
-    http/route/<aggregate>.ts                               Express Router
-    http/validators/<aggregate>/*.validator.ts              Zod schemas
-    http/docs/paths/<aggregate>/                             OpenAPI path definitions
-    services/*.service.ts           concrete implementations of domain ports (Prisma, S3, JWT)
-    db/core/prisma/                 schema, migrations, seeds
-  dependencies/
-    container.ts                    the DI Container class
-    infra.dependency.ts             registers infra services
-    use-case.dependency.ts          registers use cases (wires them to infra services)
-    controller.dependency.ts        registers controllers (wires them to use cases)
+domain/
+  ports/service/*.interface.ts   interfaces implemented by infra/services
+  ports/use-case.ts              generic IUseCase<TInput, TOutput>
+  error/domain-error.ts          DomainError + DomainErrorTypes
+application/
+  use-case/<aggregate>/<action>/<action>.usecase.ts + .dto.ts
+  error/*.ts                     ApplicationError subclasses (HTTP-facing errors)
+infra/
+  http/controller/<aggregate>/<aggregate>.controller.ts   implements IController
+  http/route/<aggregate>.ts                               Express Router
+  http/validators/<aggregate>/*.validator.ts              Zod schemas
+  http/docs/paths/<aggregate>/                             OpenAPI path definitions
+  services/*.service.ts           concrete implementations of domain ports (Prisma, S3, JWT)
+  logging/                        appLogger + pino-http, request context mixin (uses @4frames/shared/logger)
+dependencies/
+  container.ts                    the DI Container class
+  infra.dependency.ts             registers infra services
+  use-case.dependency.ts          registers use cases (wires them to infra services)
+  controller.dependency.ts        registers controllers (wires them to use cases)
 ```
 
 Use cases only depend on `domain/ports` interfaces — never import Prisma, the AWS
-SDK, or Express types into `application/`. Controllers only depend on
-`IUseCase<TInput, TOutput>` — never call a service or Prisma directly from a
-controller.
+SDK, or Express types into `application/`. Pure contracts from `@4frames/shared/jobs`
+(key builders, statuses) are allowed there; see `application/use-case/video/video-storage-key.ts`.
+Controllers only depend on `IUseCase<TInput, TOutput>` — never call a service or
+Prisma directly from a controller. Infra services get Prisma from
+`import { prisma } from '@4frames/shared/prisma'`.
 
 ## Adding a new endpoint
 
 Follow the exact shape of the `video` aggregate (`create-video-job`,
 `complete-video-job`, `get-video-job-status`) — don't invent a new convention.
+All paths below are relative to `apps/api/src`.
 
 1. **Port** (if a new infra capability is needed): add a method to the relevant
    `domain/ports/service/*.interface.ts`, or create a new interface if it's a new
@@ -79,8 +125,20 @@ Follow the exact shape of the `video` aggregate (`create-video-job`,
    controller (matches the existing layout — use case specs are siblings, controller
    specs are in a subfolder). Mock dependencies as plain Jest mocks matching the
    port interface — never hit Prisma or the AWS SDK in a use case/controller test.
+   To mock Prisma in a service test, use `jest.mock('@4frames/shared/prisma', () => ({ prisma: ... }))`
+   (see `user-authenticator.service.spec.ts`).
    Cover: happy path, not-found/wrong-owner (same error/response either way — see
    "Authorization" below), and any domain-specific invalid-state transitions.
+
+## Database (Prisma)
+
+- Schema is split in `packages/shared/prisma/models/*.prisma`; the generator writes the client to
+  `packages/shared/src/generated/prisma` (gitignored). `pnpm install` runs `db:generate` and builds
+  `shared` automatically via the root `postinstall`.
+- Create migrations with `pnpm db:migrate` (runs `prisma migrate dev` in `packages/shared`). Never
+  edit a migration that is already on `develop`; add a new one.
+- `prisma.config.ts` calls `loadEnv()`, so the Prisma CLI reads the root `.env` even though it runs
+  with `cwd = packages/shared`.
 
 ## Error handling
 
@@ -125,28 +183,45 @@ different error/status. See `CompleteVideoJobUseCase` and
   CORS policy (needed because uploads are a direct browser `PUT` to a presigned
   URL — without bucket CORS, the browser preflight fails even though a plain
   `curl` PUT would succeed).
-- The S3 client (`infra/services/s3-presigned-url.factory.ts`) sets
+- `createS3Client` (`packages/shared/src/aws/s3.ts`) sets
   `requestChecksumCalculation: 'WHEN_REQUIRED'` — without this, AWS SDK v3
   attaches a mandatory CRC32 checksum to presigned URLs that LocalStack (and a
   plain browser/curl `PUT`) rejects with `400 InvalidRequest`. Don't remove this
-  setting.
+  setting. The API's `S3PresignedUrlFactory` uses this factory.
 - If you change the bucket's init script after LocalStack is already running,
   re-apply it manually (`docker exec 4frames-localstack awslocal s3api ...`) or
   recreate the container — `ready.d` scripts only run once, on first boot.
+- Shell scripts must stay LF (`.gitattributes` enforces it); a CRLF shebang makes
+  LocalStack skip the script with "No such file or directory".
 
-## Commands
+## Docker
+
+- Build context is always the monorepo root: `docker build -f apps/api/Dockerfile -t 4frames-api .`
+- The production image installs with `--ignore-scripts` (the root `postinstall` needs sources that
+  are copied later), builds `shared` and `api`, then `pnpm deploy --prod --legacy` copies only the
+  API with production dependencies. It runs `node dist/main.js` as the `node` user.
+- `apps/api/dev.Dockerfile` + `docker-entrypoint.sh` back the `node` Compose service (install,
+  generate, build shared, migrate deploy, seed, hot reload). Each package's `node_modules` is an
+  anonymous volume so host-installed modules never leak into the Linux container.
+
+## Commands (run at the repo root)
 
 ```bash
-pnpm dev            # dev server (ts-node-dev)
-pnpm test           # jest
-pnpm exec jest --coverage
-pnpm lint           # eslint (check project scripts for exact name)
-pnpm db:migrate     # prisma migrate dev
-pnpm db:generate    # prisma generate (needed after clone/pull if generated/ is gitignored)
-pnpm db:seed        # seed test users
+pnpm install          # also generates the Prisma Client and builds @4frames/shared
+pnpm dev:api          # builds shared, then ts-node-dev for the API (also dev:worker, dev:notifier)
+pnpm dev:shared       # tsc --watch for packages/shared
+pnpm build            # every package, in dependency order
+pnpm type-check       # builds shared, then type-checks every package
+pnpm lint             # eslint for the whole repo (lint:fix to autofix)
+pnpm test             # jest in every package
+pnpm --filter @4frames/api test   # a single package
+pnpm db:migrate       # prisma migrate dev (packages/shared)
+pnpm db:deploy        # prisma migrate deploy
+pnpm db:generate      # prisma generate
+pnpm db:seed          # seed test users
 ```
 
-Run `pnpm lint`, type-check, and `pnpm test` before considering any change done.
+Run `pnpm lint`, `pnpm type-check`, `pnpm test` and `pnpm build` before considering any change done.
 For endpoints touching S3, do a real curl smoke test against LocalStack
 (login → create → PUT → complete → get-status) — unit test coverage on
 `video-job.service.ts`/`s3-presigned-url.service.ts` is currently low (they're
@@ -155,7 +230,8 @@ that catches integration issues like the CORS/checksum gaps above.
 
 ## Known gaps (per ADR-001)
 
-- No SQS, no worker, no ffmpeg processing. A job confirmed via
+- No SQS, no worker logic, no ffmpeg processing. `apps/worker` and `apps/notifier`
+  only start, log and shut down gracefully. A job confirmed via
   `POST /videos/:jobId/complete` reaches `QUEUED` and stays there forever —
   nothing consumes the queue yet.
 - No `GET /videos` (list jobs for the current user).
