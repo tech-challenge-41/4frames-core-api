@@ -1,0 +1,9 @@
+.env
+node_modules
+.pnpm-store
+dist
+local
+.cursor
+coverage/
+
+src/infra/db/core/prisma/generated
