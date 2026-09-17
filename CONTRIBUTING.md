@@ -157,7 +157,7 @@ Quando se aplicar:
 
 ### Merge
 
-- Só com aprovação, sem conflitos e com CI verde. Enquanto o workflow de CI não existir, vale o checklist do template marcado pelo autor.
+- Só com aprovação, sem conflitos e com CI verde. Enquanto o workflow de CI não existir, quem revisa confirma que os comandos de "Antes de abrir" passam.
 - Quem mescla é quem aprovou, nunca o autor.
 - Use **Create a merge commit**, que preserva os commits feitos à mão. Não use *squash* nem *rebase and merge*.
 - Apague a branch depois do merge.
