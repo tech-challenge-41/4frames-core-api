@@ -24,6 +24,7 @@ packages/
       process/    registerGracefulShutdown
       generated/  Prisma Client output (gitignored, created by `pnpm db:generate`)
 infra/localstack/init/             LocalStack bootstrap scripts
+docs/adr/                          architecture decisions: ADR-001 (PDF, AWS design) + ADR-002 (local run, monorepo, UUID)
 tsconfig.base.json                 compiler options shared by every package
 eslint.config.js, .prettierrc.js   one lint config for the whole repo
 docker-compose.yml, .env           one Compose file and one .env at the root

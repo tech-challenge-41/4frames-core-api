@@ -1,11 +1,17 @@
 # 4frames-core-api
 
 Monorepo do backend do 4Frames: conversão de vídeo em frames (`.zip`) com upload direto ao S3 via URL
-pré-assinada, fila para processamento assíncrono e notificação por e-mail (ver ADR-001).
+pré-assinada, fila para processamento assíncrono e notificação por e-mail.
 
 O front fica em [`4frames-web-app`](https://github.com/tech-challenge-41/4frames-web-app). Regras de
 branch, commit e PR estão no [CONTRIBUTING.md](./CONTRIBUTING.md). Convenções de código estão no
 [CLAUDE.md](./CLAUDE.md).
+
+## Documentação
+
+[Decisões de arquitetura](./docs/adr/README.md): o [ADR-001](./docs/adr/ADR-001-arquitetura.pdf) define a
+arquitetura, e o [ADR-002](./docs/adr/ADR-002-execucao-local-e-monorepo.md) registra a execução local, o monorepo e o
+que mudou em relação ao ADR-001.
 
 ## Estrutura
 
