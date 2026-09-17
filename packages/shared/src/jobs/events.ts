@@ -25,7 +25,7 @@ export function jobProgressKey(jobId: JobId): string {
 }
 
 const jobRef = {
-  jobId: z.string().min(1),
+  jobId: z.uuid(),
   userId: z.number().int().positive()
 };
 

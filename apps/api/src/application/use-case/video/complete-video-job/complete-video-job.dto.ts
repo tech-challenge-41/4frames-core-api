@@ -1,10 +1,11 @@
 export interface CompleteVideoJobInputDTO {
   userId: number;
-  jobId: number;
+  /** UUID do job. */
+  jobId: string;
 }
 
 export interface CompleteVideoJobOutputDTO {
-  jobId: number;
+  jobId: string;
   status: string;
   fileName: string;
 }

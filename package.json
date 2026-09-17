@@ -16,6 +16,8 @@
     "type-check": "pnpm --filter @4frames/shared build && pnpm -r --if-present type-check",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"**/*.{md,json,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{md,json,yml,yaml}\"",
     "test": "pnpm -r --if-present test",
     "dev:shared": "pnpm --filter @4frames/shared dev",
     "dev:api": "pnpm --filter @4frames/shared build && pnpm --filter @4frames/api dev",
@@ -27,6 +29,10 @@
     "db:seed": "pnpm --filter @4frames/shared db:seed",
     "prepare": "husky"
   },
+  "lint-staged": {
+    "*.{ts,js}": "eslint --fix --no-warn-ignored",
+    "*.{md,json,yml,yaml}": "prettier --write --ignore-unknown"
+  },
   "devDependencies": {
     "@eduzz/eslint-config": "^2.5.6",
     "@types/jest": "^30.0.0",
@@ -34,6 +40,8 @@
     "eslint": "^9.39.1",
     "husky": "^9.1.7",
     "jest": "^30.2.0",
+    "lint-staged": "^17.5.1",
+    "prettier": "^3.9.6",
     "ts-jest": "^29.4.5",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",

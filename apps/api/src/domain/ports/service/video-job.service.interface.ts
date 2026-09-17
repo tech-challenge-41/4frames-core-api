@@ -1,15 +1,25 @@
 export interface VideoJobRecord {
-  id: number;
+  /** UUID gerado pelo banco. */
+  id: string;
   userId: number;
   fileName: string;
   contentType: string;
+  /** Tamanho declarado na criação do job, em bytes. */
+  fileSize: number;
   status: string;
-  // Placeholder para quando o worker gravar o motivo de falha (sem coluna no banco ainda).
-  failureReason?: string | null;
+  /** Preenchido pelo worker quando o job termina em FAILED. */
+  failureReason: string | null;
+}
+
+export interface CreateUploadPendingJobInput {
+  userId: number;
+  fileName: string;
+  contentType: string;
+  fileSize: number;
 }
 
 export interface IVideoJobService {
-  createUploadPendingJob(userId: number, fileName: string, contentType: string): Promise<VideoJobRecord>;
-  findById(jobId: number): Promise<VideoJobRecord | null>;
-  updateStatus(jobId: number, status: string): Promise<VideoJobRecord>;
+  createUploadPendingJob(input: CreateUploadPendingJobInput): Promise<VideoJobRecord>;
+  findById(jobId: string): Promise<VideoJobRecord | null>;
+  updateStatus(jobId: string, status: string): Promise<VideoJobRecord>;
 }

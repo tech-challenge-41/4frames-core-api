@@ -8,6 +8,8 @@ import {
   SUPPORTED_VIDEO_CONTENT_TYPES
 } from './storage-keys';
 
+const JOB_ID = '6f1c2a9e-4b7d-4c1a-9f3e-2d8b5a7c9e10';
+
 describe('storage keys', () => {
   it('should map the supported content types to extensions', () => {
     expect(contentTypeToExtension('video/mp4')).toBe('mp4');
@@ -16,17 +18,15 @@ describe('storage keys', () => {
     expect(SUPPORTED_VIDEO_CONTENT_TYPES).toEqual(['video/mp4', 'video/quicktime']);
   });
 
-  it('should build the source key with the same layout used by the API today', () => {
-    expect(buildVideoSourceKey(1, 42, 'mp4')).toBe('videos/1/42/source.mp4');
-    expect(buildVideoSourceKey(1, '6f1c2a9e-0000-4000-8000-000000000000', 'mov')).toBe(
-      'videos/1/6f1c2a9e-0000-4000-8000-000000000000/source.mov'
-    );
+  it('should build the source key as videos/{userId}/{jobId}/source.{ext}', () => {
+    expect(buildVideoSourceKey(1, JOB_ID, 'mp4')).toBe(`videos/1/${JOB_ID}/source.mp4`);
+    expect(buildVideoSourceKey('7', JOB_ID, 'mov')).toBe(`videos/7/${JOB_ID}/source.mov`);
   });
 
   it('should parse a source key back into owner, job and extension', () => {
-    expect(parseVideoSourceKey('videos/7/abc-123/source.MP4')).toEqual({
+    expect(parseVideoSourceKey(`videos/7/${JOB_ID}/source.MP4`)).toEqual({
       userId: '7',
-      jobId: 'abc-123',
+      jobId: JOB_ID,
       extension: 'mp4'
     });
   });
@@ -39,8 +39,8 @@ describe('storage keys', () => {
   );
 
   it('should build zip and frame keys outside the videos/ prefix', () => {
-    expect(buildZipKey(1, 42)).toBe('zips/1/42.zip');
-    expect(buildFrameKey(1, 42, 'frame_0001.png')).toBe('frames/1/42/frame_0001.png');
+    expect(buildZipKey(1, JOB_ID)).toBe(`zips/1/${JOB_ID}.zip`);
+    expect(buildFrameKey(1, JOB_ID, 'frame_0001.png')).toBe(`frames/1/${JOB_ID}/frame_0001.png`);
   });
 
   it('should name frames like the base project (frame_%04d.png)', () => {

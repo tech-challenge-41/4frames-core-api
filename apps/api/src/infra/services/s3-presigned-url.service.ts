@@ -8,16 +8,24 @@ import {
 
 interface S3PresignedUrlServiceConfig {
   bucketName: string;
+  /** Cliente das chamadas feitas pela própria API (HEAD, e futuramente GET/PUT). Usa o endpoint interno. */
   client: S3Client;
+  /**
+   * Cliente usado só para assinar URLs abertas pelo navegador. Usa o endpoint público.
+   * Assinar não faz requisição, então este cliente nunca precisa alcançar o S3. Padrão: `client`.
+   */
+  presignClient?: S3Client;
 }
 
 export class S3PresignedUrlService implements IVideoStorageService {
   private readonly bucketName: string;
   private readonly client: S3Client;
+  private readonly presignClient: S3Client;
 
-  constructor({ bucketName, client }: S3PresignedUrlServiceConfig) {
+  constructor({ bucketName, client, presignClient }: S3PresignedUrlServiceConfig) {
     this.bucketName = bucketName;
     this.client = client;
+    this.presignClient = presignClient ?? client;
   }
 
   public async generatePresignedUploadUrl(
@@ -31,7 +39,7 @@ export class S3PresignedUrlService implements IVideoStorageService {
       ContentType: contentType
     });
 
-    const uploadUrl = await getSignedUrl(this.client, command, { expiresIn });
+    const uploadUrl = await getSignedUrl(this.presignClient, command, { expiresIn });
 
     return { uploadUrl, expiresIn };
   }

@@ -1,8 +1,24 @@
 import { DomainError } from '@/domain/error/domain-error';
 import { DomainErrorTypes } from '@/domain/error/error-types';
-import { type IVideoJobService } from '@/domain/ports/service/video-job.service.interface';
+import { type IVideoJobService, type VideoJobRecord } from '@/domain/ports/service/video-job.service.interface';
 
 import { GetVideoJobStatusUseCase } from './get-video-job-status.usecase';
+
+const JOB_ID = '6f1c2a9e-4b7d-4c1a-9f3e-2d8b5a7c9e10';
+const MISSING_JOB_ID = '00000000-0000-4000-8000-000000000000';
+
+function buildJob(overrides: Partial<VideoJobRecord> = {}): VideoJobRecord {
+  return {
+    id: JOB_ID,
+    userId: 1,
+    fileName: 'my-video.mp4',
+    contentType: 'video/mp4',
+    fileSize: 1024,
+    status: 'PROCESSING',
+    failureReason: null,
+    ...overrides
+  };
+}
 
 describe('GetVideoJobStatusUseCase', () => {
   let useCase: GetVideoJobStatusUseCase;
@@ -19,44 +35,45 @@ describe('GetVideoJobStatusUseCase', () => {
   });
 
   it('should return the job status when the job belongs to the user', async () => {
-    videoJobService.findById.mockResolvedValue({
-      id: 42,
-      userId: 1,
-      fileName: 'my-video.mp4',
-      contentType: 'video/mp4',
-      status: 'PROCESSING'
-    });
+    videoJobService.findById.mockResolvedValue(buildJob());
 
-    const result = await useCase.execute({ userId: 1, jobId: 42 });
+    const result = await useCase.execute({ userId: 1, jobId: JOB_ID });
 
-    expect(videoJobService.findById).toHaveBeenCalledWith(42);
+    expect(videoJobService.findById).toHaveBeenCalledWith(JOB_ID);
     expect(result).toEqual({
-      jobId: 42,
+      jobId: JOB_ID,
       status: 'PROCESSING',
       fileName: 'my-video.mp4'
+    });
+  });
+
+  it('should include the failure reason when the job failed', async () => {
+    videoJobService.findById.mockResolvedValue(buildJob({ status: 'FAILED', failureReason: 'Invalid video file' }));
+
+    const result = await useCase.execute({ userId: 1, jobId: JOB_ID });
+
+    expect(result).toEqual({
+      jobId: JOB_ID,
+      status: 'FAILED',
+      fileName: 'my-video.mp4',
+      failureReason: 'Invalid video file'
     });
   });
 
   it('should throw NOT_FOUND DomainError when the job does not exist', async () => {
     videoJobService.findById.mockResolvedValue(null);
 
-    await expect(useCase.execute({ userId: 1, jobId: 999 })).rejects.toThrow(DomainError);
-    await expect(useCase.execute({ userId: 1, jobId: 999 })).rejects.toMatchObject({
+    await expect(useCase.execute({ userId: 1, jobId: MISSING_JOB_ID })).rejects.toThrow(DomainError);
+    await expect(useCase.execute({ userId: 1, jobId: MISSING_JOB_ID })).rejects.toMatchObject({
       type: DomainErrorTypes.NOT_FOUND
     });
   });
 
   it('should throw NOT_FOUND DomainError when the job belongs to another user', async () => {
-    videoJobService.findById.mockResolvedValue({
-      id: 42,
-      userId: 2,
-      fileName: 'my-video.mp4',
-      contentType: 'video/mp4',
-      status: 'DONE'
-    });
+    videoJobService.findById.mockResolvedValue(buildJob({ userId: 2, status: 'DONE' }));
 
-    await expect(useCase.execute({ userId: 1, jobId: 42 })).rejects.toThrow(DomainError);
-    await expect(useCase.execute({ userId: 1, jobId: 42 })).rejects.toMatchObject({
+    await expect(useCase.execute({ userId: 1, jobId: JOB_ID })).rejects.toThrow(DomainError);
+    await expect(useCase.execute({ userId: 1, jobId: JOB_ID })).rejects.toMatchObject({
       type: DomainErrorTypes.NOT_FOUND
     });
   });

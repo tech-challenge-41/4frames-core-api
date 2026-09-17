@@ -1,5 +1,6 @@
-/** Identificadores aceitos nas chaves. O jobId passa de número para UUID na migration v2 de video_jobs. */
-export type JobId = number | string;
+/** Id do job: UUID gerado pelo Postgres (video_jobs.id). */
+export type JobId = string;
+/** Id do dono: users.id (inteiro), aceito também como string porque chega assim da chave do S3. */
 export type OwnerId = number | string;
 
 const CONTENT_TYPE_TO_EXTENSION: Record<string, string> = {

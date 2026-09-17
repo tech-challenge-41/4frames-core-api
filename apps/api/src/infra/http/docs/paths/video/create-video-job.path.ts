@@ -29,8 +29,9 @@ export const createVideoJobPath = {
                 type: 'object',
                 properties: {
                   jobId: {
-                    type: 'number',
-                    description: 'Identificador do job de upload'
+                    type: 'string',
+                    format: 'uuid',
+                    description: 'Identificador do job de upload (UUID)'
                   },
                   uploadUrl: {
                     type: 'string',
