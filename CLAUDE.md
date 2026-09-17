@@ -51,7 +51,8 @@ docker-compose.yml, .env           one Compose file and one .env at the root
 
 - Express 5, Zod (validation), Prisma 7 with the `pg` driver adapter, JWT (jsonwebtoken + bcrypt)
 - `@aws-sdk/client-s3` + `@aws-sdk/s3-request-presigner` for presigned upload URLs
-- LocalStack (S3 only, for now) for local dev — see `infra/localstack/`
+- Local dev with Docker Compose: PostgreSQL 16, Redis 7, Mailpit and LocalStack (S3 + SQS) — see
+  "Local environment" below
 - Manual DI via a `Container` singleton (no framework like InversifyJS/tsyringe)
 - Jest + ts-jest for tests, one `jest.config.ts` per package
 
@@ -185,23 +186,45 @@ but belongs to another user" identically — same `DomainError` with
 different error/status. See `CompleteVideoJobUseCase` and
 `GetVideoJobStatusUseCase` for the reference implementation.
 
-## LocalStack / S3
+## Local environment (Compose + LocalStack)
 
-- `infra/localstack/init/create-bucket.sh` runs on container bootstrap: creates
-  the bucket (`S3_BUCKET_NAME`, default `4frames-videos`) and sets a permissive
-  CORS policy (needed because uploads are a direct browser `PUT` to a presigned
-  URL — without bucket CORS, the browser preflight fails even though a plain
-  `curl` PUT would succeed).
+- One `.env` at the root, with **host** addresses (`localhost`). Apps started with `pnpm dev:*` use it
+  as is. The `migrate` and `api` Compose services load the same file and override only the internal
+  hosts through the `x-container-endpoints` block (`postgres`, `localstack`, `redis`, `mailpit`).
+  When you add an env var that points to another container, add its override there too.
+- `docker compose up -d --build` runs everything; `docker compose up -d postgres redis mailpit localstack`
+  runs only infrastructure for host development. Both modes bind the API to port 3000.
+- `migrate` is a one-shot service (`pnpm db:deploy && pnpm db:seed`); `api` waits for it with
+  `service_completed_successfully`. Neither has `container_name`, so services can be scaled later.
+
+## LocalStack / S3 / SQS
+
+- `infra/localstack/init/*.sh` run in name order on every LocalStack start (the `ready.d` hook), and the
+  `localstack` healthcheck only turns healthy after `/_localstack/init/ready` reports all of them
+  completed:
+  - `00-s3.sh`: bucket (`S3_BUCKET_NAME`) + permissive CORS. Uploads are a direct browser `PUT` to a
+    presigned URL; without bucket CORS the browser preflight fails even though `curl` works.
+  - `10-sqs.sh`: `4frames-video-uploads` (VisibilityTimeout 600, long polling 20 s) with a redrive
+    policy to `4frames-video-uploads-dlq` after 3 receives.
+  - `20-s3-notification.sh`: queue policy for `s3.amazonaws.com` + bucket notification
+    `s3:ObjectCreated:*` filtered by prefix `videos/` (writes to `frames/` and `zips/` must not loop).
+- Scripts must be idempotent, LF (`.gitattributes` enforces it) and **executable**: LocalStack calls
+  them directly (`subprocess.call(executable=path)`). This clone runs with `core.filemode=false`, so
+  commit new scripts with `git add --chmod=+x`.
+- Setting the notification makes S3 publish an `s3:TestEvent` message. It happens on every LocalStack
+  start; queue consumers must ignore it.
+- LocalStack runs without persistence: a restart wipes objects and messages and the scripts recreate
+  empty resources. To re-apply a changed script, `docker compose restart localstack`.
+- LocalStack returns queue URLs as `http://sqs.<region>.localhost.localstack.cloud:4566/...`. The
+  project uses the equivalent `http://<host>:4566/000000000000/<queue>`, which needs no external DNS.
+- Two S3 endpoints: `AWS_ENDPOINT_URL` is what the app reaches (`localstack:4566` inside Compose) and
+  `S3_PUBLIC_ENDPOINT_URL` is what the browser reaches (`localhost:4566`). `S3PresignedUrlFactory`
+  signs URLs with a client on the public endpoint and does `HEAD` with the internal one. Signing
+  makes no network call, so the public client never needs to reach S3.
 - `createS3Client` (`packages/shared/src/aws/s3.ts`) sets
   `requestChecksumCalculation: 'WHEN_REQUIRED'` — without this, AWS SDK v3
   attaches a mandatory CRC32 checksum to presigned URLs that LocalStack (and a
-  plain browser/curl `PUT`) rejects with `400 InvalidRequest`. Don't remove this
-  setting. The API's `S3PresignedUrlFactory` uses this factory.
-- If you change the bucket's init script after LocalStack is already running,
-  re-apply it manually (`docker exec 4frames-localstack awslocal s3api ...`) or
-  recreate the container — `ready.d` scripts only run once, on first boot.
-- Shell scripts must stay LF (`.gitattributes` enforces it); a CRLF shebang makes
-  LocalStack skip the script with "No such file or directory".
+  plain browser/curl `PUT`) rejects with `400 InvalidRequest`. Don't remove this setting.
 
 ## Docker
 
@@ -209,9 +232,10 @@ different error/status. See `CompleteVideoJobUseCase` and
 - The production image installs with `--ignore-scripts` (the root `postinstall` needs sources that
   are copied later), builds `shared` and `api`, then `pnpm deploy --prod --legacy` copies only the
   API with production dependencies. It runs `node dist/main.js` as the `node` user.
-- `apps/api/dev.Dockerfile` + `docker-entrypoint.sh` back the `node` Compose service (install,
-  generate, build shared, migrate deploy, seed, hot reload). Each package's `node_modules` is an
-  anonymous volume so host-installed modules never leak into the Linux container.
+- `apps/api/dev.Dockerfile` backs the `migrate` and `api` Compose services. `docker-entrypoint.sh`
+  installs dependencies, generates the Prisma Client, builds `shared` and then `exec "$@"` runs the
+  service command. Each package's `node_modules` is an anonymous volume so host-installed modules
+  never leak into the Linux container.
 
 ## Commands (run at the repo root)
 
@@ -228,6 +252,8 @@ pnpm db:migrate       # prisma migrate dev (packages/shared)
 pnpm db:deploy        # prisma migrate deploy
 pnpm db:generate      # prisma generate
 pnpm db:seed          # seed test users
+docker compose up -d --build                             # full stack, API in a container
+docker compose up -d postgres redis mailpit localstack   # infra only, apps via pnpm dev:*
 ```
 
 Run `pnpm lint`, `pnpm type-check`, `pnpm test` and `pnpm build` before considering any change done.
@@ -239,10 +265,12 @@ that catches integration issues like the CORS/checksum gaps above.
 
 ## Known gaps (per ADR-001)
 
-- No SQS, no worker logic, no ffmpeg processing. `apps/worker` and `apps/notifier`
-  only start, log and shut down gracefully. A job confirmed via
-  `POST /videos/:jobId/complete` reaches `QUEUED` and stays there forever —
-  nothing consumes the queue yet.
+- No worker logic, no ffmpeg processing. Every confirmed upload already lands as a message
+  in `4frames-video-uploads`, but `apps/worker` and `apps/notifier` only start, log and shut
+  down gracefully. A job confirmed via `POST /videos/:jobId/complete` reaches `QUEUED` and
+  stays there — nothing consumes the queue yet.
+- `.env.example` already lists worker and notifier settings (`SQS_*`, `REDIS_URL`, `FRAME_*`,
+  `SMTP_*`, `MAIL_FROM`, `WEB_APP_URL`) that no app reads yet.
 - No `GET /videos` (list jobs for the current user).
 - No `GET /videos/:jobId/download` (presigned/CloudFront download URL when
   `DONE`).

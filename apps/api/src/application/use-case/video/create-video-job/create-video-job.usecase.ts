@@ -6,20 +6,28 @@ import { type IUseCase } from '@/domain/ports/use-case';
 import { type CreateVideoJobInputDTO, type CreateVideoJobOutputDTO } from './create-video-job.dto';
 import { buildVideoSourceKey, contentTypeToExtension } from '../video-storage-key';
 
-const UPLOAD_URL_EXPIRES_IN_SECONDS = 5 * 60;
+const DEFAULT_UPLOAD_URL_EXPIRES_IN_SECONDS = 5 * 60;
 
 interface CreateVideoJobUseCaseDependencies {
   videoJobService: IVideoJobService;
   videoStorageService: IVideoStorageService;
+  /** Validade da URL pré-assinada (UPLOAD_URL_TTL_SECONDS, lido no composition root). */
+  uploadUrlExpiresInSeconds?: number;
 }
 
 export class CreateVideoJobUseCase implements IUseCase {
   private readonly videoJobService: IVideoJobService;
   private readonly videoStorageService: IVideoStorageService;
+  private readonly uploadUrlExpiresInSeconds: number;
 
-  constructor({ videoJobService, videoStorageService }: CreateVideoJobUseCaseDependencies) {
+  constructor({
+    videoJobService,
+    videoStorageService,
+    uploadUrlExpiresInSeconds = DEFAULT_UPLOAD_URL_EXPIRES_IN_SECONDS
+  }: CreateVideoJobUseCaseDependencies) {
     this.videoJobService = videoJobService;
     this.videoStorageService = videoStorageService;
+    this.uploadUrlExpiresInSeconds = uploadUrlExpiresInSeconds;
   }
 
   public async execute({
@@ -41,7 +49,7 @@ export class CreateVideoJobUseCase implements IUseCase {
     const { uploadUrl, expiresIn } = await this.videoStorageService.generatePresignedUploadUrl(
       key,
       contentType,
-      UPLOAD_URL_EXPIRES_IN_SECONDS
+      this.uploadUrlExpiresInSeconds
     );
 
     return {

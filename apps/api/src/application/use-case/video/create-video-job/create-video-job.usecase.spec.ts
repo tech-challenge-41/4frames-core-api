@@ -113,4 +113,35 @@ describe('CreateVideoJobUseCase', () => {
     expect(videoJobService.createUploadPendingJob).not.toHaveBeenCalled();
     expect(videoStorageService.generatePresignedUploadUrl).not.toHaveBeenCalled();
   });
+
+  it('should sign the upload URL with the configured expiration', async () => {
+    useCase = new CreateVideoJobUseCase({ videoJobService, videoStorageService, uploadUrlExpiresInSeconds: 900 });
+    videoJobService.createUploadPendingJob.mockResolvedValue({
+      id: JOB_ID,
+      userId: 1,
+      fileName: 'my-video.mp4',
+      contentType: 'video/mp4',
+      fileSize: 1024,
+      status: 'UPLOAD_PENDING',
+      failureReason: null
+    });
+    videoStorageService.generatePresignedUploadUrl.mockResolvedValue({
+      uploadUrl: 'https://s3.example.com/signed-url',
+      expiresIn: 900
+    });
+
+    const result = await useCase.execute({
+      userId: 1,
+      fileName: 'my-video.mp4',
+      fileSize: 1024,
+      contentType: 'video/mp4'
+    });
+
+    expect(videoStorageService.generatePresignedUploadUrl).toHaveBeenCalledWith(
+      `videos/1/${JOB_ID}/source.mp4`,
+      'video/mp4',
+      900
+    );
+    expect(result.expiresIn).toBe(900);
+  });
 });

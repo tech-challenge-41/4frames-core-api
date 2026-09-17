@@ -24,3 +24,5 @@ COPY . .
 EXPOSE 3000
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+# O docker-compose.yml define o comando de cada serviço (api: dev server; migrate: migrations + seed).
+CMD ["pnpm", "--filter", "@4frames/api", "dev"]
