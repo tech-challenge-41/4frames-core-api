@@ -6,5 +6,5 @@ module.exports = [
     files: ['**/*.ts'],
     rules: { 'max-lines': ['error', { max: 10000 }] }
   },
-  { ignores: ignores() }
+  { ignores: ignores('**/dist/**', '**/coverage/**', '**/generated/**') }
 ];

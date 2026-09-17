@@ -17,7 +17,7 @@ O front fica em [`4frames-web-app`](https://github.com/tech-challenge-41/4frames
 
 ## Ambiente
 
-Pré-requisitos: Node.js 24 ou superior, pnpm 10, Docker Desktop e git.
+Pré-requisitos: Node.js 24 (ver `.nvmrc`), pnpm 10, Docker Desktop e git.
 
 No Windows, configure o git para manter os finais de linha em LF antes de trabalhar:
 
@@ -127,16 +127,18 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 pnpm lint
 pnpm type-check
 pnpm test
+pnpm build
 ```
+
+Os comandos rodam na raiz e cobrem todos os pacotes do monorepo (`apps/api`, `apps/worker`, `apps/notifier` e `packages/shared`). Para um pacote só, use `--filter`, por exemplo `pnpm --filter @4frames/worker test`.
 
 Quando se aplicar:
 
-- **Mudou o schema do Prisma:** gere a migration com `pnpm db:migrate` e commite a pasta criada. Nunca edite uma migration que já está em `develop`; crie outra.
+- **Mudou o `packages/shared`:** rode os testes dos apps que o usam, não só os do `shared`. Os apps consomem o `shared` compilado, então `pnpm build` precisa passar.
+- **Mudou o schema do Prisma:** o schema e as migrations ficam em `packages/shared/prisma`. Gere a migration com `pnpm db:migrate` e commite a pasta criada. Nunca edite uma migration que já está em `develop`; crie outra.
 - **Criou ou mudou um endpoint:** atualize o OpenAPI e faça o smoke por curl descrito no `CLAUDE.md` (login, criar job, PUT no S3, complete, status).
 - **Criou uma variável de ambiente:** adicione ao `.env.example` com um valor seguro para desenvolvimento e um comentário.
 - **Fechou uma limitação conhecida:** atualize as seções de *known gaps* do `README.md` e do `CLAUDE.md`.
-
-> Os caminhos de código citados no `CLAUDE.md` mudam quando o repositório virar monorepo (`apps/`, `packages/`). O PR dessa reestruturação atualiza este guia.
 
 ### Ao abrir
 
@@ -179,7 +181,7 @@ Use versões `0.x.y` durante o desenvolvimento. A `release-1.0.0` é a versão e
 
 - O `.env` nunca é commitado. O modelo versionado é o `.env.example`.
 - Nada de tokens, PATs ou senhas reais em código, testes, documentação ou prints. Os seeds usam só senhas de teste.
-- Não versione `node_modules/`, `dist/`, `coverage/` nem o client gerado do Prisma (`generated/`).
+- Não versione `node_modules/`, `dist/`, `coverage/` nem o client gerado do Prisma (`packages/shared/src/generated/`).
 - Se um segredo for commitado por engano, avise o grupo na hora e revogue a credencial. Reescrever o histórico exige `push --force` e é decidido em grupo.
 
 ## Mudanças neste guia

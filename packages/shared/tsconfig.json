@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    "types": ["node", "jest"]
+  },
+  "include": ["src/**/*", "prisma/**/*.ts", "prisma.config.ts", "jest.config.ts"],
+  "exclude": ["node_modules", "dist"]
+}

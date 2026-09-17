@@ -1,0 +1,21 @@
+{
+  "name": "@4frames/worker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Worker do 4Frames: consome a fila SQS, extrai frames com ffmpeg e gera o zip",
+  "main": "dist/main.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "ts-node-dev -r tsconfig-paths/register --respawn --transpile-only src/main.ts",
+    "build": "tsc && tsc-alias",
+    "type-check": "tsc --noEmit",
+    "start": "node dist/main.js",
+    "test": "jest --coverage --passWithNoTests"
+  },
+  "dependencies": {
+    "@4frames/shared": "workspace:*",
+    "tsconfig-paths": "^4.2.0"
+  }
+}

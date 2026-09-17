@@ -1,50 +1,80 @@
 # 4frames-core-api
 
-API REST do núcleo 4Frames — autenticação de funcionários via JWT e criação/acompanhamento
-de jobs de conversão de vídeo em frames (`.zip`), com upload direto ao S3 via URL
-pré-assinada (ver ADR-001 na raiz do monorepo).
+Monorepo do backend do 4Frames: conversão de vídeo em frames (`.zip`) com upload direto ao S3 via URL
+pré-assinada, fila para processamento assíncrono e notificação por e-mail (ver ADR-001).
 
-## Arquitetura
+O front fica em [`4frames-web-app`](https://github.com/tech-challenge-41/4frames-web-app). Regras de
+branch, commit e PR estão no [CONTRIBUTING.md](./CONTRIBUTING.md). Convenções de código estão no
+[CLAUDE.md](./CLAUDE.md).
 
-O projeto segue Clean/Hexagonal architecture com separação em camadas:
+## Estrutura
 
-- `src/domain` — entidades, value objects, ports, domain errors
-- `src/application` — use cases, DTOs, application errors
-- `src/infra` — HTTP, database, services, logging
-- `src/dependencies` — DI container (composition root)
+| Pacote | Nome | O que é |
+|---|---|---|
+| `apps/api` | `@4frames/api` | API REST (Express 5): login JWT, jobs de vídeo e URLs pré-assinadas |
+| `apps/worker` | `@4frames/worker` | Worker de processamento (scaffold; consumer SQS e ffmpeg no Card 2) |
+| `apps/notifier` | `@4frames/notifier` | Notificador por e-mail (scaffold; assinatura de eventos no Card 4) |
+| `packages/shared` | `@4frames/shared` | Prisma (schema, migrations, seeds e client), env, logger, contratos de job, clientes AWS e Redis |
+| `infra/` | – | Scripts de init do LocalStack |
+
+A API segue arquitetura hexagonal em `apps/api/src`: `domain` (ports e erros), `application`
+(use cases e DTOs), `infra` (HTTP, serviços, logging) e `dependencies` (container de DI).
+
+## Pré-requisitos
+
+- Node.js 24 (ver `.nvmrc`) e pnpm 10
+- Docker Desktop
 
 ## Desenvolvimento
 
 ```bash
 cp .env.example .env
-docker compose up -d postgres
+docker compose up -d postgres localstack
 pnpm install
 pnpm db:migrate
 pnpm db:seed
-pnpm dev
+pnpm dev:api
 ```
+
+- O `pnpm install` também gera o Prisma Client e compila o `@4frames/shared` (script `postinstall`).
+- Um único `.env` na raiz serve todos os pacotes. Para rodar a API no host, use `DB_HOST=localhost`.
+- Os apps consomem o `@4frames/shared` compilado (`dist`). Depois de alterar o `shared`, rode
+  `pnpm --filter @4frames/shared build`, ou deixe `pnpm dev:shared` recompilando em outro terminal.
+
+### Comandos (na raiz)
+
+| Comando | O que faz |
+|---|---|
+| `pnpm dev:api` / `dev:worker` / `dev:notifier` | Compila o `shared` e sobe o app com hot reload |
+| `pnpm dev:shared` | Recompila o `shared` a cada mudança |
+| `pnpm build` | Compila todos os pacotes, na ordem de dependência |
+| `pnpm type-check` | Type-check de todos os pacotes |
+| `pnpm lint` / `pnpm lint:fix` | ESLint no monorepo inteiro |
+| `pnpm test` | Testes de todos os pacotes |
+| `pnpm db:generate` / `db:migrate` / `db:deploy` / `db:seed` | Prisma no `@4frames/shared` |
+
+Para um pacote só, use `--filter`, por exemplo `pnpm --filter @4frames/api test`.
 
 ## LocalStack (S3)
 
 Uploads de vídeo usam URLs pré-assinadas do S3 (ver ADR-001). Em desenvolvimento local, o S3 é simulado com [LocalStack](https://www.localstack.cloud/).
 
-```bash
-docker compose up -d localstack
-```
-
 O bucket `4frames-videos` (nome configurável via `S3_BUCKET_NAME`) é criado automaticamente no bootstrap do container. Para verificar:
 
 ```bash
-awslocal s3 ls
-# ou, sem o awslocal instalado localmente:
 aws --endpoint-url=http://localhost:4566 s3 ls
 ```
 
-## Testes
+## Docker
+
+As imagens são construídas a partir da raiz do monorepo.
 
 ```bash
-pnpm test
+docker build -f apps/api/Dockerfile -t 4frames-api .
 ```
+
+O serviço `node` do `docker-compose.yml` sobe a API em modo desenvolvimento dentro do container
+(install, Prisma, migrations, seed e hot reload).
 
 ## Endpoints
 

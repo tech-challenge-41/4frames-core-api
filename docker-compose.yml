@@ -2,12 +2,17 @@ services:
   node:
     build:
       context: .
-      dockerfile: dev.Dockerfile
+      dockerfile: apps/api/dev.Dockerfile
     container_name: 4frames-core-api
-    working_dir: /app
+    working_dir: /repo
     volumes:
-      - .:/app
-      - /app/node_modules
+      - .:/repo
+      # node_modules ficam dentro do container: os do Windows/macOS não servem no Linux
+      - /repo/node_modules
+      - /repo/apps/api/node_modules
+      - /repo/apps/worker/node_modules
+      - /repo/apps/notifier/node_modules
+      - /repo/packages/shared/node_modules
     ports:
       - '3000:3000'
     env_file: .env
