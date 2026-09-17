@@ -245,7 +245,8 @@ pnpm dev:api          # builds shared, then ts-node-dev for the API (also dev:wo
 pnpm dev:shared       # tsc --watch for packages/shared
 pnpm build            # every package, in dependency order
 pnpm type-check       # builds shared, then type-checks every package
-pnpm lint             # eslint for the whole repo (lint:fix to autofix)
+pnpm lint             # eslint for the whole repo (lint:fix to autofix); also formats TS/JS via prettier
+pnpm format           # prettier for md/json/yml (format:check to verify)
 pnpm test             # jest in every package
 pnpm --filter @4frames/api test   # a single package
 pnpm db:migrate       # prisma migrate dev (packages/shared)
@@ -255,6 +256,10 @@ pnpm db:seed          # seed test users
 docker compose up -d --build                             # full stack, API in a container
 docker compose up -d postgres redis mailpit localstack   # infra only, apps via pnpm dev:*
 ```
+
+A Husky `pre-commit` hook runs lint-staged on staged files: `eslint --fix` for `*.ts`/`*.js` and
+`prettier --write` for `*.md`/`*.json`/`*.yml`/`*.yaml` (config in the root `package.json`). Files you
+create or edit should already pass `pnpm lint` and `pnpm format:check`, so the hook has nothing to rewrite.
 
 Run `pnpm lint`, `pnpm type-check`, `pnpm test` and `pnpm build` before considering any change done.
 For endpoints touching S3, do a real curl smoke test against LocalStack

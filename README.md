@@ -9,13 +9,13 @@ branch, commit e PR estão no [CONTRIBUTING.md](./CONTRIBUTING.md). Convenções
 
 ## Estrutura
 
-| Pacote | Nome | O que é |
-|---|---|---|
-| `apps/api` | `@4frames/api` | API REST (Express 5): login JWT, jobs de vídeo e URLs pré-assinadas |
-| `apps/worker` | `@4frames/worker` | Worker de processamento (scaffold; consumer SQS e ffmpeg no Card 2) |
-| `apps/notifier` | `@4frames/notifier` | Notificador por e-mail (scaffold; assinatura de eventos no Card 4) |
-| `packages/shared` | `@4frames/shared` | Prisma (schema, migrations, seeds e client), env, logger, contratos de job, clientes AWS e Redis |
-| `infra/` | – | Scripts de init do LocalStack |
+| Pacote            | Nome                | O que é                                                                                          |
+| ----------------- | ------------------- | ------------------------------------------------------------------------------------------------ |
+| `apps/api`        | `@4frames/api`      | API REST (Express 5): login JWT, jobs de vídeo e URLs pré-assinadas                              |
+| `apps/worker`     | `@4frames/worker`   | Worker de processamento (scaffold; consumer SQS e ffmpeg no Card 2)                              |
+| `apps/notifier`   | `@4frames/notifier` | Notificador por e-mail (scaffold; assinatura de eventos no Card 4)                               |
+| `packages/shared` | `@4frames/shared`   | Prisma (schema, migrations, seeds e client), env, logger, contratos de job, clientes AWS e Redis |
+| `infra/`          | –                   | Scripts de init do LocalStack                                                                    |
 
 A API segue arquitetura hexagonal em `apps/api/src`: `domain` (ports e erros), `application`
 (use cases e DTOs), `infra` (HTTP, serviços, logging) e `dependencies` (container de DI).
@@ -60,25 +60,26 @@ pnpm dev:api
 
 ### Serviços locais
 
-| Serviço | Endereço | Para quê |
-|---|---|---|
-| API | http://localhost:3000 (`/api-docs`) | REST |
-| PostgreSQL | localhost:5432 | Banco |
-| LocalStack | http://localhost:4566 | S3 e SQS |
-| Redis | localhost:6379 | Progresso e eventos de job |
-| Mailpit | SMTP em localhost:1025, caixa em http://localhost:8025 | E-mails de desenvolvimento |
+| Serviço    | Endereço                                               | Para quê                   |
+| ---------- | ------------------------------------------------------ | -------------------------- |
+| API        | http://localhost:3000 (`/api-docs`)                    | REST                       |
+| PostgreSQL | localhost:5432                                         | Banco                      |
+| LocalStack | http://localhost:4566                                  | S3 e SQS                   |
+| Redis      | localhost:6379                                         | Progresso e eventos de job |
+| Mailpit    | SMTP em localhost:1025, caixa em http://localhost:8025 | E-mails de desenvolvimento |
 
 ### Comandos (na raiz)
 
-| Comando | O que faz |
-|---|---|
-| `pnpm dev:api` / `dev:worker` / `dev:notifier` | Compila o `shared` e sobe o app com hot reload |
-| `pnpm dev:shared` | Recompila o `shared` a cada mudança |
-| `pnpm build` | Compila todos os pacotes, na ordem de dependência |
-| `pnpm type-check` | Type-check de todos os pacotes |
-| `pnpm lint` / `pnpm lint:fix` | ESLint no monorepo inteiro |
-| `pnpm test` | Testes de todos os pacotes |
-| `pnpm db:generate` / `db:migrate` / `db:deploy` / `db:seed` | Prisma no `@4frames/shared` |
+| Comando                                                     | O que faz                                                              |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `pnpm dev:api` / `dev:worker` / `dev:notifier`              | Compila o `shared` e sobe o app com hot reload                         |
+| `pnpm dev:shared`                                           | Recompila o `shared` a cada mudança                                    |
+| `pnpm build`                                                | Compila todos os pacotes, na ordem de dependência                      |
+| `pnpm type-check`                                           | Type-check de todos os pacotes                                         |
+| `pnpm lint` / `pnpm lint:fix`                               | ESLint no monorepo inteiro                                             |
+| `pnpm format` / `pnpm format:check`                         | Prettier em Markdown, JSON e YAML (TypeScript é formatado pelo ESLint) |
+| `pnpm test`                                                 | Testes de todos os pacotes                                             |
+| `pnpm db:generate` / `db:migrate` / `db:deploy` / `db:seed` | Prisma no `@4frames/shared`                                            |
 
 Para um pacote só, use `--filter`, por exemplo `pnpm --filter @4frames/api test`.
 
@@ -87,11 +88,11 @@ Para um pacote só, use `--filter`, por exemplo `pnpm --filter @4frames/api test
 Em desenvolvimento, S3 e SQS são simulados com [LocalStack](https://www.localstack.cloud/). A cada start
 do container, os scripts de `infra/localstack/init/` criam:
 
-| Script | Recurso |
-|---|---|
-| `00-s3.sh` | Bucket `4frames-videos` com CORS para o PUT direto do navegador |
-| `10-sqs.sh` | Fila `4frames-video-uploads` (visibility 600 s, long polling 20 s) e DLQ `4frames-video-uploads-dlq` após 3 recebimentos |
-| `20-s3-notification.sh` | Notificação `s3:ObjectCreated:*` do prefixo `videos/` para a fila |
+| Script                  | Recurso                                                                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `00-s3.sh`              | Bucket `4frames-videos` com CORS para o PUT direto do navegador                                                          |
+| `10-sqs.sh`             | Fila `4frames-video-uploads` (visibility 600 s, long polling 20 s) e DLQ `4frames-video-uploads-dlq` após 3 recebimentos |
+| `20-s3-notification.sh` | Notificação `s3:ObjectCreated:*` do prefixo `videos/` para a fila                                                        |
 
 Todo upload confirmado gera uma mensagem na fila com a chave `videos/{userId}/{jobId}/source.{ext}`.
 Gravações em `frames/` e `zips/` não geram mensagens. Para inspecionar:
@@ -147,7 +148,7 @@ confirmação do upload.
 
 Usuários de teste (senha: `123456`):
 
-| Email |
-|-------|
+| Email           |
+| --------------- |
 | admin@admin.com |
-| user@user.com |
+| user@user.com   |

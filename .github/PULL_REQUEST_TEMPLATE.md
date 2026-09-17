@@ -20,7 +20,7 @@ Regras completas em CONTRIBUTING.md.
 
 - [ ] A base do PR é `develop`
 - [ ] Título e commits seguem Conventional Commits
-- [ ] `pnpm lint`, `pnpm type-check`, `pnpm test` e `pnpm build` passam localmente
+- [ ] `pnpm lint`, `pnpm format:check`, `pnpm type-check`, `pnpm test` e `pnpm build` passam localmente
 - [ ] CI verde, quando o workflow existir
 - [ ] Testes novos ou atualizados cobrem a mudança
 - [ ] Migration gerada e commitada, se o schema do Prisma mudou
