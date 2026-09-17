@@ -1,12 +1,13 @@
 export interface GetVideoJobStatusInputDTO {
   userId: number;
-  jobId: number;
+  /** UUID do job. */
+  jobId: string;
 }
 
 export interface GetVideoJobStatusOutputDTO {
-  jobId: number;
+  jobId: string;
   status: string;
   fileName: string;
-  // Sempre omitido por ora: video_jobs ainda não tem coluna para o motivo de falha (worker vai gravá-la futuramente).
+  /** Presente só quando o job terminou em FAILED e o worker gravou o motivo. */
   failureReason?: string;
 }

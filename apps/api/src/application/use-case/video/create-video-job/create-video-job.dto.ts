@@ -6,7 +6,8 @@ export interface CreateVideoJobInputDTO {
 }
 
 export interface CreateVideoJobOutputDTO {
-  jobId: number;
+  /** UUID do job. */
+  jobId: string;
   uploadUrl: string;
   expiresIn: number;
 }

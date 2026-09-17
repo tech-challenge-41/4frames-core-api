@@ -38,7 +38,7 @@ describe('VideoController', () => {
 
   it('should create a video job successfully', async () => {
     const mockResult = {
-      jobId: 42,
+      jobId: '6f1c2a9e-4b7d-4c1a-9f3e-2d8b5a7c9e10',
       uploadUrl: 'https://s3.example.com/signed-url',
       expiresIn: 300
     };

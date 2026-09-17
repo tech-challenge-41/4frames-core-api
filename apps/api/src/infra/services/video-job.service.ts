@@ -1,14 +1,24 @@
-import { prisma, type VideoJobStatus } from '@4frames/shared/prisma';
+import { prisma, type video_jobs, type VideoJobStatus } from '@4frames/shared/prisma';
 
-import { type IVideoJobService, type VideoJobRecord } from '@/domain/ports/service/video-job.service.interface';
+import {
+  type CreateUploadPendingJobInput,
+  type IVideoJobService,
+  type VideoJobRecord
+} from '@/domain/ports/service/video-job.service.interface';
 
 export class VideoJobService implements IVideoJobService {
-  public async createUploadPendingJob(userId: number, fileName: string, contentType: string): Promise<VideoJobRecord> {
+  public async createUploadPendingJob({
+    userId,
+    fileName,
+    contentType,
+    fileSize
+  }: CreateUploadPendingJobInput): Promise<VideoJobRecord> {
     const job = await prisma.video_jobs.create({
       data: {
         user_id: userId,
         file_name: fileName,
         content_type: contentType,
+        file_size: BigInt(fileSize),
         status: 'UPLOAD_PENDING'
       }
     });
@@ -16,7 +26,7 @@ export class VideoJobService implements IVideoJobService {
     return this.toRecord(job);
   }
 
-  public async findById(jobId: number): Promise<VideoJobRecord | null> {
+  public async findById(jobId: string): Promise<VideoJobRecord | null> {
     const job = await prisma.video_jobs.findUnique({
       where: { id: jobId }
     });
@@ -28,7 +38,7 @@ export class VideoJobService implements IVideoJobService {
     return this.toRecord(job);
   }
 
-  public async updateStatus(jobId: number, status: string): Promise<VideoJobRecord> {
+  public async updateStatus(jobId: string, status: string): Promise<VideoJobRecord> {
     const job = await prisma.video_jobs.update({
       where: { id: jobId },
       data: { status: status as VideoJobStatus }
@@ -37,19 +47,16 @@ export class VideoJobService implements IVideoJobService {
     return this.toRecord(job);
   }
 
-  private toRecord(job: {
-    id: number;
-    user_id: number;
-    file_name: string;
-    content_type: string;
-    status: string;
-  }): VideoJobRecord {
+  private toRecord(job: video_jobs): VideoJobRecord {
     return {
       id: job.id,
       userId: job.user_id,
       fileName: job.file_name,
       contentType: job.content_type,
-      status: job.status
+      // BIGINT no banco; o limite de upload (500 MB) cabe com folga em number e bigint não serializa em JSON.
+      fileSize: Number(job.file_size),
+      status: job.status,
+      failureReason: job.failure_reason
     };
   }
 }

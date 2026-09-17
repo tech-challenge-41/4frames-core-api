@@ -4,6 +4,8 @@ import { type IVideoStorageService } from '@/domain/ports/service/video-storage.
 
 import { CreateVideoJobUseCase } from './create-video-job.usecase';
 
+const JOB_ID = '6f1c2a9e-4b7d-4c1a-9f3e-2d8b5a7c9e10';
+
 describe('CreateVideoJobUseCase', () => {
   let useCase: CreateVideoJobUseCase;
   let videoJobService: jest.Mocked<IVideoJobService>;
@@ -27,13 +29,15 @@ describe('CreateVideoJobUseCase', () => {
     });
   });
 
-  it('should create a job and return a presigned upload URL', async () => {
+  it('should create a job with the declared file size and return a presigned upload URL', async () => {
     videoJobService.createUploadPendingJob.mockResolvedValue({
-      id: 42,
+      id: JOB_ID,
       userId: 1,
       fileName: 'my-video.mp4',
       contentType: 'video/mp4',
-      status: 'UPLOAD_PENDING'
+      fileSize: 1024,
+      status: 'UPLOAD_PENDING',
+      failureReason: null
     });
 
     videoStorageService.generatePresignedUploadUrl.mockResolvedValue({
@@ -48,14 +52,19 @@ describe('CreateVideoJobUseCase', () => {
       contentType: 'video/mp4'
     });
 
-    expect(videoJobService.createUploadPendingJob).toHaveBeenCalledWith(1, 'my-video.mp4', 'video/mp4');
+    expect(videoJobService.createUploadPendingJob).toHaveBeenCalledWith({
+      userId: 1,
+      fileName: 'my-video.mp4',
+      contentType: 'video/mp4',
+      fileSize: 1024
+    });
     expect(videoStorageService.generatePresignedUploadUrl).toHaveBeenCalledWith(
-      'videos/1/42/source.mp4',
+      `videos/1/${JOB_ID}/source.mp4`,
       'video/mp4',
       300
     );
     expect(result).toEqual({
-      jobId: 42,
+      jobId: JOB_ID,
       uploadUrl: 'https://s3.example.com/signed-url',
       expiresIn: 300
     });
@@ -63,11 +72,13 @@ describe('CreateVideoJobUseCase', () => {
 
   it('should build the key with the .mov extension for video/quicktime', async () => {
     videoJobService.createUploadPendingJob.mockResolvedValue({
-      id: 7,
+      id: JOB_ID,
       userId: 5,
       fileName: 'clip.mov',
       contentType: 'video/quicktime',
-      status: 'UPLOAD_PENDING'
+      fileSize: 2048,
+      status: 'UPLOAD_PENDING',
+      failureReason: null
     });
 
     videoStorageService.generatePresignedUploadUrl.mockResolvedValue({
@@ -83,7 +94,7 @@ describe('CreateVideoJobUseCase', () => {
     });
 
     expect(videoStorageService.generatePresignedUploadUrl).toHaveBeenCalledWith(
-      'videos/5/7/source.mov',
+      `videos/5/${JOB_ID}/source.mov`,
       'video/quicktime',
       300
     );

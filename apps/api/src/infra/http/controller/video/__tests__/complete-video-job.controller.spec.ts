@@ -5,6 +5,8 @@ import { type IUseCase } from '@/domain/ports/use-case';
 
 import { CompleteVideoJobController } from '../complete-video-job.controller';
 
+const JOB_ID = '6f1c2a9e-4b7d-4c1a-9f3e-2d8b5a7c9e10';
+
 describe('CompleteVideoJobController', () => {
   let controller: CompleteVideoJobController;
   let mockUseCase: jest.Mocked<IUseCase<any, any>>;
@@ -23,7 +25,7 @@ describe('CompleteVideoJobController', () => {
 
     mockRequest = {
       authenticated: { userId: 1 },
-      params: { jobId: '42' }
+      params: { jobId: JOB_ID }
     };
 
     mockResponse = {
@@ -35,7 +37,7 @@ describe('CompleteVideoJobController', () => {
 
   it('should confirm the upload successfully', async () => {
     const mockResult = {
-      jobId: 42,
+      jobId: JOB_ID,
       status: 'QUEUED',
       fileName: 'my-video.mp4'
     };
@@ -43,22 +45,13 @@ describe('CompleteVideoJobController', () => {
 
     await controller.handle(mockRequest as Request, mockResponse as Response);
 
-    expect(mockUseCase.execute).toHaveBeenCalledWith({ userId: 1, jobId: 42 });
+    expect(mockUseCase.execute).toHaveBeenCalledWith({ userId: 1, jobId: JOB_ID });
     expect(mockStatus).toHaveBeenCalledWith(200);
     expect(mockJson).toHaveBeenCalledWith(mockResult);
   });
 
-  it('should throw InvalidRequestParamError for a non-numeric jobId', async () => {
-    mockRequest.params = { jobId: 'abc' };
-
-    await expect(controller.handle(mockRequest as Request, mockResponse as Response)).rejects.toThrow(
-      InvalidRequestParamError
-    );
-    expect(mockUseCase.execute).not.toHaveBeenCalled();
-  });
-
-  it('should throw InvalidRequestParamError for a negative jobId', async () => {
-    mockRequest.params = { jobId: '-1' };
+  it.each(['42', 'abc'])('should throw InvalidRequestParamError when jobId is not a UUID (%s)', async jobId => {
+    mockRequest.params = { jobId };
 
     await expect(controller.handle(mockRequest as Request, mockResponse as Response)).rejects.toThrow(
       InvalidRequestParamError

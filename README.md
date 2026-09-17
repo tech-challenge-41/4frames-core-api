@@ -85,11 +85,11 @@ O serviço `node` do `docker-compose.yml` sobe a API em modo desenvolvimento den
 - `GET /health-check` — health check
 - `GET /api-docs` — documentação OpenAPI
 
-Todas as rotas de `/videos` exigem `Authorization: Bearer <token>`.
+Todas as rotas de `/videos` exigem `Authorization: Bearer <token>`. O `jobId` é um UUID; um valor em outro formato recebe `400`.
 
 ### Fluxo de conversão
 
-1. `POST /videos` com `{ fileName, fileSize, contentType }` (`video/mp4` ou `video/quicktime`, até 500MB) → devolve `{ jobId, uploadUrl, expiresIn }`.
+1. `POST /videos` com `{ fileName, fileSize, contentType }` (`video/mp4` ou `video/quicktime`, até 500MB) → devolve `{ jobId, uploadUrl, expiresIn }`, com `jobId` em UUID.
 2. O cliente faz `PUT` do arquivo direto na `uploadUrl` (bytes não passam pela API).
 3. `POST /videos/{jobId}/complete` → confirma o objeto no bucket e marca `QUEUED`.
 4. `GET /videos/{jobId}` → consulta o status a qualquer momento (`UPLOAD_PENDING` → `QUEUED` → `PROCESSING` → `DONE`/`FAILED`/`EXPIRED`).

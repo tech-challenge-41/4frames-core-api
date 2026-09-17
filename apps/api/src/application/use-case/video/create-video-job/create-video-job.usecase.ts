@@ -22,14 +22,19 @@ export class CreateVideoJobUseCase implements IUseCase {
     this.videoStorageService = videoStorageService;
   }
 
-  public async execute({ userId, fileName, contentType }: CreateVideoJobInputDTO): Promise<CreateVideoJobOutputDTO> {
+  public async execute({
+    userId,
+    fileName,
+    fileSize,
+    contentType
+  }: CreateVideoJobInputDTO): Promise<CreateVideoJobOutputDTO> {
     const extension = contentTypeToExtension(contentType);
 
     if (!extension) {
       throw new VideoValidationError('Unsupported content type', { contentType });
     }
 
-    const job = await this.videoJobService.createUploadPendingJob(userId, fileName, contentType);
+    const job = await this.videoJobService.createUploadPendingJob({ userId, fileName, contentType, fileSize });
 
     const key = buildVideoSourceKey(userId, job.id, extension);
 

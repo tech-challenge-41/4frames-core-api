@@ -11,8 +11,8 @@ export const completeVideoJobPath = {
           name: 'jobId',
           in: 'path',
           required: true,
-          schema: { type: 'integer', minimum: 1 },
-          description: 'Identificador numérico do job'
+          schema: { type: 'string', format: 'uuid' },
+          description: 'Identificador do job (UUID)'
         }
       ],
       responses: {
@@ -24,8 +24,9 @@ export const completeVideoJobPath = {
                 type: 'object',
                 properties: {
                   jobId: {
-                    type: 'number',
-                    description: 'Identificador do job'
+                    type: 'string',
+                    format: 'uuid',
+                    description: 'Identificador do job (UUID)'
                   },
                   status: {
                     type: 'string',
