@@ -9,3 +9,4 @@ packages/shared/src/generated
 .cursor
 .env
 local
+.pnpm-store

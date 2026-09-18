@@ -8,7 +8,7 @@ and a shared package. Read this before adding or changing any endpoint or packag
 ```
 apps/
   api/          @4frames/api       Express 5 REST API (hexagonal, see "Layers" below)
-  worker/       @4frames/worker    SQS consumer + ffmpeg (scaffold only: main.ts with graceful shutdown)
+  worker/       @4frames/worker    SQS consumer + ffmpeg: frames, zip, job status and progress (see "Worker" below)
   notifier/     @4frames/notifier  Redis subscriber + email (scaffold only: main.ts with graceful shutdown)
 packages/
   shared/       @4frames/shared    code and contracts used by more than one app
@@ -227,6 +227,36 @@ different error/status. See `CompleteVideoJobUseCase` and
   attaches a mandatory CRC32 checksum to presigned URLs that LocalStack (and a
   plain browser/curl `PUT`) rejects with `400 InvalidRequest`. Don't remove this setting.
 
+## Worker (`apps/worker`)
+
+Not hexagonal like the API, but the same idea: `processing/process-video-job.usecase.ts` orchestrates and
+depends only on the interfaces in `processing/ports.ts`; adapters live next to it.
+
+```
+config/worker-env.ts          zod schema for every worker variable (defaults: FRAME_FPS=1, FRAME_FORMAT=png)
+consumer/sqs-consumer.ts      generic SQS loop: long polling, 1 message at a time, visibility heartbeat, stop()
+consumer/video-upload-handler.ts  S3 event → use case (ignores s3:TestEvent, deletes malformed messages)
+consumer/dlq-handler.ts       dead-lettered message → FAILED "Falha após 3 tentativas" + job.failed
+processing/                   use case, ports, InvalidVideoError + FAILURE_REASONS, source key parsing
+ffmpeg/                       run-process (spawn), ffprobe validation, frame extraction with -progress
+storage/ zip/ repo/ progress/ health/   S3 (lib-storage), archiver, Prisma, Redis publisher, /healthz
+```
+
+- Error classification is the core rule. `InvalidVideoError` (the video's fault) → `FAILED` with a Portuguese,
+  user-facing `failure_reason` and the message is deleted. Any other error is transient: rethrow it, the
+  consumer makes the message visible again in 60 s, and after 3 receives SQS moves it to the DLQ. A process
+  killed by a signal or timeout, or ffmpeg failing for lack of disk/memory, is transient, not invalid.
+- Write order (ADR-001 §2.3): S3 artifacts → status in Postgres → Redis event. Redis publishing is
+  best-effort (logged, never rethrown): the durable status is already saved.
+- Status transitions are conditional `updateMany` calls. `markProcessing` accepts `QUEUED` **and**
+  `PROCESSING`, so a message that reappears after a worker crash resumes the job.
+- The S3 event fires at the end of the PUT, before the front calls `complete`. A job still in
+  `UPLOAD_PENDING` is polled for up to 30 s, then the message is returned to the queue.
+- `stop()` aborts the long poll and waits for the current message; `isAlive()` stays true while that job
+  finishes, so a liveness probe never kills a pod during graceful shutdown.
+- Tests: unit specs next to the code (fake runner for ffmpeg, fake SQS client). `test/integration` runs real
+  ffmpeg on `test/fixtures` and skips when ffmpeg is not in PATH (run them inside the worker container).
+
 ## Docker
 
 - Build context is always the monorepo root: `docker build -f apps/api/Dockerfile -t 4frames-api .`
@@ -237,6 +267,11 @@ different error/status. See `CompleteVideoJobUseCase` and
   installs dependencies, generates the Prisma Client, builds `shared` and then `exec "$@"` runs the
   service command. Each package's `node_modules` is an anonymous volume so host-installed modules
   never leak into the Linux container.
+- `apps/worker/dev.Dockerfile` is the same base plus `ffmpeg`, with the same entrypoint. The `worker` service
+  sets `SKIP_SHARED_BUILD=1` (migrate already built `shared`; api and worker start together) and runs the
+  compiled worker with `exec node` under `init: true`, not `ts-node-dev`: ts-node-dev exits on SIGTERM
+  without waiting for its child, which would break graceful shutdown. `stop_grace_period` is 10 min.
+- `apps/worker/Dockerfile` (production) installs `ffmpeg`, runs `node dist/main.js` as `node` and exposes 9100.
 
 ## Commands (run at the repo root)
 
@@ -271,18 +306,14 @@ that catches integration issues like the CORS/checksum gaps above.
 
 ## Known gaps (per ADR-001)
 
-- No worker logic, no ffmpeg processing. Every confirmed upload already lands as a message
-  in `4frames-video-uploads`, but `apps/worker` and `apps/notifier` only start, log and shut
-  down gracefully. A job confirmed via `POST /videos/:jobId/complete` reaches `QUEUED` and
-  stays there — nothing consumes the queue yet.
-- `.env.example` already lists worker and notifier settings (`SQS_*`, `REDIS_URL`, `FRAME_*`,
-  `SMTP_*`, `MAIL_FROM`, `WEB_APP_URL`) that no app reads yet.
+- `apps/notifier` only starts, logs and shuts down gracefully: nobody consumes `jobs.events` yet, so no
+  email is sent. `.env.example` already lists `SMTP_*`, `MAIL_FROM` and `WEB_APP_URL`, which no app reads yet.
 - No `GET /videos` (list jobs for the current user).
 - No `GET /videos/:jobId/download` (presigned/CloudFront download URL when
   `DONE`).
-- `video_jobs` already has `failure_reason`, `zip_key`, `frame_count`, `duration_seconds`,
-  `notified_at` and `correlation_id`, but nothing writes them yet (worker, notifier and
-  correlation logging come later). Only `failure_reason` is exposed, in `GET /videos/:jobId`.
+- The worker writes `failure_reason`, `zip_key`, `frame_count` and `duration_seconds`; `notified_at` and
+  `correlation_id` are still unused (notifier and correlation logging come later). Only `failure_reason`
+  is exposed by the API, in `GET /videos/:jobId`.
 - `POST /auth` vs. the ADR's documented `POST /auth/login` — the route name
   never got reconciled with the ADR text; not a functional issue, just a doc
   mismatch to be aware of.

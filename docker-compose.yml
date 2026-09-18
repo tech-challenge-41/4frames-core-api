@@ -66,6 +66,46 @@ services:
       localstack:
         condition: service_healthy
 
+  # Consome a fila de uploads e a DLQ, extrai os frames com ffmpeg e grava zip, status e eventos.
+  # Roda compilado (sem hot reload): o ts-node-dev sai ao receber SIGTERM sem esperar o processo filho,
+  # e o worker precisa desse sinal para terminar o job atual antes de parar (docker compose stop).
+  # Réplicas e escala automática ficam no cluster (KEDA).
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/dev.Dockerfile
+    image: 4frames-core-api-worker-dev
+    command: ['sh', '-c', 'pnpm --filter @4frames/worker build && exec node apps/worker/dist/main.js']
+    working_dir: /repo
+    # tini como PID 1 repassa o SIGTERM ao node.
+    init: true
+    volumes:
+      - .:/repo
+      - /repo/node_modules
+      - /repo/apps/api/node_modules
+      - /repo/apps/worker/node_modules
+      - /repo/apps/notifier/node_modules
+      - /repo/packages/shared/node_modules
+      # Arquivos temporários de cada job (no cluster, um emptyDir)
+      - /tmp/4frames
+    env_file: .env
+    environment:
+      <<: *container-endpoints
+      WORKER_TMP_DIR: /tmp/4frames
+      # O migrate já gerou o Prisma Client e compilou o shared; api e worker sobem juntos.
+      SKIP_SHARED_BUILD: '1'
+    # Cobre um job inteiro depois do SIGTERM (WORKER_SHUTDOWN_TIMEOUT_SECONDS fica abaixo disso).
+    stop_grace_period: 10m
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+
   postgres:
     image: postgres:16-alpine
     ports:
