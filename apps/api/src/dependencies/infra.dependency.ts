@@ -3,6 +3,7 @@ import { appLogger } from '@/infra/logging/application-logger';
 import { JwtAuthenticatorService } from '@/infra/services/jwt-authenticator.service';
 import { JwtSecretKeyFactory } from '@/infra/services/jwt-secret-key.factory';
 import JwtSecretKeyService from '@/infra/services/jwt-secret-key.service';
+import { RedisJobEventSubscriberService } from '@/infra/services/redis-job-event-subscriber.service';
 import { S3PresignedUrlFactory } from '@/infra/services/s3-presigned-url.factory';
 import { S3PresignedUrlService } from '@/infra/services/s3-presigned-url.service';
 import { UserAuthenticatorService } from '@/infra/services/user-authenticator.service';
@@ -17,4 +18,5 @@ export async function infraDependency(c: Container) {
   c.register(JwtAuthenticatorService.name, new JwtAuthenticatorService());
   c.register(S3PresignedUrlService.name, S3PresignedUrlFactory.create());
   c.register(VideoJobService.name, new VideoJobService());
+  c.register(RedisJobEventSubscriberService.name, new RedisJobEventSubscriberService({ logger: appLogger }));
 }
