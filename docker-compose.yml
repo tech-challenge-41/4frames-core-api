@@ -1,6 +1,7 @@
 # Ambiente local do 4Frames (ver README.md).
 #
 #   Tudo no Docker:          docker compose up -d --build
+#   (api, worker, notifier, migrate + postgres, redis, mailpit, localstack)
 #   Apps no host (pnpm dev): docker compose up -d postgres redis mailpit localstack
 #
 # O .env da raiz usa endereços do host (localhost), que servem para os apps rodando com pnpm.
@@ -28,8 +29,7 @@ x-container-endpoints: &container-endpoints
   SQS_QUEUE_URL: http://localstack:4566/000000000000/4frames-video-uploads
   SQS_DLQ_URL: http://localstack:4566/000000000000/4frames-video-uploads-dlq
   REDIS_URL: redis://redis:6379
-  SMTP_HOST: mailpit
-  SMTP_PORT: '1025'
+  # SMTP (notifier): não sobrescrever — usa SMTP_* / SMTP_PASSWORD do .env (Mailtrap, Mailpit, etc.).
 
 services:
   # One-shot: aplica migrations e seed antes da API subir.
@@ -108,7 +108,7 @@ services:
       localstack:
         condition: service_healthy
 
-  # Assina jobs.events no Redis e envia e-mail (Mailpit) em job.done / job.failed.
+  # Assina jobs.events no Redis e envia e-mail (SMTP do .env) em job.done / job.failed.
   notifier:
     build: *app-build
     image: 4frames-core-api-dev
@@ -116,7 +116,10 @@ services:
     working_dir: /repo
     volumes: *app-volumes
     env_file: .env
-    environment: *container-endpoints
+    environment:
+      <<: *container-endpoints
+      # migrate já gerou o Prisma Client e compilou o shared (mesmo padrão do worker).
+      SKIP_SHARED_BUILD: '1'
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -124,7 +127,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      mailpit:
+      api:
+        condition: service_started
+      worker:
         condition: service_started
 
   postgres:

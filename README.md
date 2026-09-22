@@ -46,8 +46,11 @@ docker compose up -d --build
 ```
 
 Sobe Postgres, Redis, Mailpit, LocalStack, o serviço `migrate` (migrations e seed, depois encerra), a
-API em modo desenvolvimento em `http://localhost:3000` e o worker (por padrão **2 consumidores SQS** em paralelo via
-`WORKER_CONCURRENCY`; use `docker compose up --scale worker=N` para mais réplicas).
+API em modo desenvolvimento em `http://localhost:3000`, o **worker** (por padrão **2 consumidores SQS** em paralelo via
+`WORKER_CONCURRENCY`; use `docker compose up --scale worker=N` para mais réplicas) e o **notifier** (e-mail em
+`job.done`/`job.failed` via SMTP conforme `SMTP_*` no `.env` — ex.: Mailtrap ou Mailpit em http://localhost:8025).
+
+Para recriar só o notificador após mudanças no código: `docker compose up -d --build notifier`.
 
 ### Apps no host
 
@@ -67,13 +70,14 @@ pnpm dev:api
 
 ### Serviços locais
 
-| Serviço    | Endereço                                               | Para quê                   |
-| ---------- | ------------------------------------------------------ | -------------------------- |
-| API        | http://localhost:3000 (`/api-docs`)                    | REST                       |
-| PostgreSQL | localhost:5432                                         | Banco                      |
-| LocalStack | http://localhost:4566                                  | S3 e SQS                   |
-| Redis      | localhost:6379                                         | Progresso e eventos de job |
-| Mailpit    | SMTP em localhost:1025, caixa em http://localhost:8025 | E-mails de desenvolvimento |
+| Serviço    | Endereço                                                                              | Para quê                                                    |
+| ---------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| API        | http://localhost:3000 (`/api-docs`)                                                   | REST                                                        |
+| PostgreSQL | localhost:5432                                                                        | Banco                                                       |
+| LocalStack | http://localhost:4566                                                                 | S3 e SQS                                                    |
+| Redis      | localhost:6379                                                                        | Progresso e eventos de job                                  |
+| Mailpit    | SMTP em localhost:1025 (ou `mailpit:1025` no Compose), caixa em http://localhost:8025 | Opcional; use se `SMTP_HOST` no `.env` apontar para Mailpit |
+| Notifier   | (sem porta HTTP; logs via `docker compose logs -f notifier`)                          | E-mail ao terminar/falhar job                               |
 
 ### Comandos (na raiz)
 

@@ -60,9 +60,17 @@ async function bootstrap(): Promise<void> {
   recovery.start();
   await subscriber.start();
 
+  const smtpInboxHint =
+    env.SMTP_HOST === 'mailpit' || env.SMTP_HOST === 'localhost'
+      ? 'http://localhost:8025 (Mailpit)'
+      : `caixa do provedor configurado em SMTP_HOST (${env.SMTP_HOST}:${env.SMTP_PORT})`;
+
   logger.info('Notifier started', {
     nodeEnv: env.NODE_ENV,
     webAppUrl: env.WEB_APP_URL,
+    smtpHost: env.SMTP_HOST,
+    smtpPort: env.SMTP_PORT,
+    smtpInboxHint,
     recoveryIntervalSeconds: env.NOTIFIER_RECOVERY_INTERVAL_SECONDS
   });
 }
