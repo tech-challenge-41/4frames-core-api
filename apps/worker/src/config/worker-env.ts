@@ -29,7 +29,12 @@ export const workerEnvSchema = runtimeEnvSchema
     /** Tempo para terminar o job atual depois do SIGTERM. Fica abaixo do stop_grace_period / terminationGracePeriodSeconds. */
     WORKER_SHUTDOWN_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(570),
     /** Limite de uma execução do ffmpeg; ao estourar, o processo é morto e o job volta à fila. */
-    FFMPEG_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(1800)
+    FFMPEG_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(1800),
+    /**
+     * Quantos consumidores SQS da fila de uploads rodam no mesmo processo (um job por consumidor).
+     * Para mais paralelismo em produção, prefira réplicas do Deployment (KEDA); localmente isso evita `docker compose scale`.
+     */
+    WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(2)
   });
 
 export type WorkerEnv = z.infer<typeof workerEnvSchema>;

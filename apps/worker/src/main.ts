@@ -75,16 +75,19 @@ async function bootstrap(): Promise<void> {
     tmpDir: env.WORKER_TMP_DIR
   });
 
-  const consumers = [
-    new SqsConsumer({
-      name: 'uploads',
-      sqs,
-      queueUrl: env.SQS_QUEUE_URL,
-      handler: createVideoUploadHandler({ processVideoJob, bucket: env.S3_BUCKET_NAME, logger }),
-      logger,
-      visibilityTimeoutSeconds: env.VISIBILITY_TIMEOUT_SECONDS
-    })
-  ];
+  const uploadHandler = createVideoUploadHandler({ processVideoJob, bucket: env.S3_BUCKET_NAME, logger });
+  const consumers = Array.from(
+    { length: env.WORKER_CONCURRENCY },
+    (_, index) =>
+      new SqsConsumer({
+        name: `uploads-${index}`,
+        sqs,
+        queueUrl: env.SQS_QUEUE_URL,
+        handler: uploadHandler,
+        logger,
+        visibilityTimeoutSeconds: env.VISIBILITY_TIMEOUT_SECONDS
+      })
+  );
 
   if (env.SQS_DLQ_URL) {
     consumers.push(
@@ -129,6 +132,7 @@ async function bootstrap(): Promise<void> {
 
   logger.info('Worker started', {
     nodeEnv: env.NODE_ENV,
+    concurrency: env.WORKER_CONCURRENCY,
     frameFps: env.FRAME_FPS,
     frameFormat: env.FRAME_FORMAT,
     maxVideoDurationSeconds: env.MAX_VIDEO_DURATION_SECONDS,

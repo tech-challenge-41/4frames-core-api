@@ -19,7 +19,7 @@ que mudou em relação ao ADR-001.
 | ----------------- | ------------------- | ------------------------------------------------------------------------------------------------ |
 | `apps/api`        | `@4frames/api`      | API REST (Express 5): login JWT, jobs de vídeo e URLs pré-assinadas                              |
 | `apps/worker`     | `@4frames/worker`   | Worker: consome a fila SQS, extrai os frames com ffmpeg, gera o zip e publica o progresso        |
-| `apps/notifier`   | `@4frames/notifier` | Notificador por e-mail (scaffold; assinatura de eventos no Card 4)                               |
+| `apps/notifier`   | `@4frames/notifier` | Assina `jobs.events`, envia e-mail (Pug + SMTP/Mailpit) e recupera jobs sem `notified_at`        |
 | `packages/shared` | `@4frames/shared`   | Prisma (schema, migrations, seeds e client), env, logger, contratos de job, clientes AWS e Redis |
 | `infra/`          | –                   | Scripts de init do LocalStack                                                                    |
 
@@ -46,7 +46,8 @@ docker compose up -d --build
 ```
 
 Sobe Postgres, Redis, Mailpit, LocalStack, o serviço `migrate` (migrations e seed, depois encerra), a
-API em modo desenvolvimento em `http://localhost:3000` e o worker.
+API em modo desenvolvimento em `http://localhost:3000` e o worker (por padrão **2 consumidores SQS** em paralelo via
+`WORKER_CONCURRENCY`; use `docker compose up --scale worker=N` para mais réplicas).
 
 ### Apps no host
 

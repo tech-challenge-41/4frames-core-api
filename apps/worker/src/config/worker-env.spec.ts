@@ -24,7 +24,8 @@ describe('workerEnvSchema', () => {
       WORKER_TMP_DIR: path.join(os.tmpdir(), '4frames'),
       WORKER_HEALTH_PORT: 9100,
       WORKER_SHUTDOWN_TIMEOUT_SECONDS: 570,
-      FFMPEG_TIMEOUT_SECONDS: 1800
+      FFMPEG_TIMEOUT_SECONDS: 1800,
+      WORKER_CONCURRENCY: 2
     });
   });
 

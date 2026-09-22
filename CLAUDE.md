@@ -9,7 +9,7 @@ and a shared package. Read this before adding or changing any endpoint or packag
 apps/
   api/          @4frames/api       Express 5 REST API (hexagonal, see "Layers" below)
   worker/       @4frames/worker    SQS consumer + ffmpeg: frames, zip, job status and progress (see "Worker" below)
-  notifier/     @4frames/notifier  Redis subscriber + email (scaffold only: main.ts with graceful shutdown)
+  notifier/     @4frames/notifier  Redis `jobs.events` subscriber, SMTP e-mail (Pug templates), recovery sweep
 packages/
   shared/       @4frames/shared    code and contracts used by more than one app
     prisma/                        schema.prisma, models/*.prisma, migrations/, seeds/
@@ -277,8 +277,8 @@ Not hexagonal like the API, but the same idea: `processing/process-video-job.use
 depends only on the interfaces in `processing/ports.ts`; adapters live next to it.
 
 ```
-config/worker-env.ts          zod schema for every worker variable (defaults: FRAME_FPS=1, FRAME_FORMAT=png)
-consumer/sqs-consumer.ts      generic SQS loop: long polling, 1 message at a time, visibility heartbeat, stop()
+config/worker-env.ts          zod schema for every worker variable (defaults: FRAME_FPS=1, FRAME_FORMAT=png, WORKER_CONCURRENCY=2)
+consumer/sqs-consumer.ts      generic SQS loop: long polling, 1 message at a time per consumer, visibility heartbeat, stop()
 consumer/video-upload-handler.ts  S3 event → use case (ignores s3:TestEvent, deletes malformed messages)
 consumer/dlq-handler.ts       dead-lettered message → FAILED "Falha após 3 tentativas" + job.failed
 processing/                   use case, ports, InvalidVideoError + FAILURE_REASONS, source key parsing
@@ -298,6 +298,10 @@ storage/ zip/ repo/ progress/ health/   S3 (lib-storage), archiver, Prisma, Redi
   `UPLOAD_PENDING` is polled for up to 30 s, then the message is returned to the queue.
 - `stop()` aborts the long poll and waits for the current message; `isAlive()` stays true while that job
   finishes, so a liveness probe never kills a pod during graceful shutdown.
+- **Parallel jobs**: `main.ts` starts `WORKER_CONCURRENCY` independent `SqsConsumer` instances on the
+  uploads queue (default **2**, max 32, env `WORKER_CONCURRENCY`). Each consumer handles one message at a
+  time; temp files are isolated under `WORKER_TMP_DIR/{jobId}`. In Compose, set `WORKER_CONCURRENCY` or
+  `docker compose up --scale worker=N` for more throughput. Production scaling is still KEDA réplicas per ADR-002.
 - Tests: unit specs next to the code (fake runner for ffmpeg, fake SQS client). `test/integration` runs real
   ffmpeg on `test/fixtures` and skips when ffmpeg is not in PATH (run them inside the worker container).
 
@@ -312,9 +316,10 @@ storage/ zip/ repo/ progress/ health/   S3 (lib-storage), archiver, Prisma, Redi
   service command. Each package's `node_modules` is an anonymous volume so host-installed modules
   never leak into the Linux container.
 - `apps/worker/dev.Dockerfile` is the same base plus `ffmpeg`, with the same entrypoint. The `worker` service
-  sets `SKIP_SHARED_BUILD=1` (migrate already built `shared`; api and worker start together) and runs the
-  compiled worker with `exec node` under `init: true`, not `ts-node-dev`: ts-node-dev exits on SIGTERM
-  without waiting for its child, which would break graceful shutdown. `stop_grace_period` is 10 min.
+  sets `SKIP_SHARED_BUILD=1` (migrate already built `shared`; api and worker start together),
+  `WORKER_CONCURRENCY` (default 2) for parallel SQS consumers in one container, and runs the compiled worker
+  with `exec node` under `init: true`, not `ts-node-dev`: ts-node-dev exits on SIGTERM without waiting for its
+  child, which would break graceful shutdown. `stop_grace_period` is 10 min.
 - `apps/worker/Dockerfile` (production) installs `ffmpeg`, runs `node dist/main.js` as `node` and exposes 9100.
 
 ## Commands (run at the repo root)
@@ -350,7 +355,8 @@ that catches integration issues like the CORS/checksum gaps above.
 
 ## What's implemented (video job lifecycle, per ADR-001 §2.2)
 
-The full lifecycle of a single job is implemented and tested end to end:
+The full lifecycle of a job is implemented and tested end to end (many jobs per user and parallel
+processing via SQS + multiple worker consumers/réplicas):
 `POST /videos` (create + presigned upload URL) → direct browser `PUT` to S3 →
 `POST /videos/:jobId/complete` (confirm + `QUEUED`) →
 `POST /videos/:jobId/cancel` (cancel while `UPLOAD_PENDING`/`QUEUED`, reuses the
@@ -366,14 +372,8 @@ ordered by `created_at desc`).
 
 **Application-level (per ADR-001):**
 
-- `apps/notifier` only starts, logs and shuts down gracefully: nobody consumes
-  `jobs.events` yet, so no email is sent on `job.done`/`job.failed`.
-  `.env.example` already lists `SMTP_*`, `MAIL_FROM` and `WEB_APP_URL`, which no
-  app reads yet. This is the last piece of the ADR-001 application flow that
-  hasn't been started.
-- `notified_at` and `correlation_id` on `video_jobs` are still unused (they exist
-  for the notifier and for correlated logging across api/worker/notifier, both
-  pending on the notifier landing).
+- `correlation_id` on `video_jobs` is still unused for correlated logging across
+  api/worker/notifier (field exists; propagation not wired end-to-end).
 - `POST /auth` vs. the ADR's documented `POST /auth/login` — the route name
   never got reconciled with the ADR text; not a functional issue, just a doc
   mismatch to be aware of.
@@ -383,8 +383,8 @@ started here):**
 
 - No local Kubernetes cluster, Ingress, HPA or KEDA — everything today runs via
   `docker compose`, which ADR-002 explicitly calls the _development_ environment,
-  not the scaling mechanism. There's currently no environment that actually
-  demonstrates the auto-scaling story from ADR-001.
+  not the scaling mechanism. Parallel video processing is demonstrated locally with
+  `WORKER_CONCURRENCY` and/or `docker compose up --scale worker=N`, not with KEDA yet.
 - No CI/CD: only `.github/PULL_REQUEST_TEMPLATE.md` exists, no GitHub Actions
   workflow runs lint/test/build, publishes images to GHCR, or deploys to an
   ephemeral cluster.

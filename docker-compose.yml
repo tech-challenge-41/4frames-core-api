@@ -92,6 +92,8 @@ services:
     environment:
       <<: *container-endpoints
       WORKER_TMP_DIR: /tmp/4frames
+      # Vários jobs em paralelo no mesmo container (além de `docker compose up --scale worker=N`).
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
       # O migrate já gerou o Prisma Client e compilou o shared; api e worker sobem juntos.
       SKIP_SHARED_BUILD: '1'
     # Cobre um job inteiro depois do SIGTERM (WORKER_SHUTDOWN_TIMEOUT_SECONDS fica abaixo disso).
@@ -105,6 +107,25 @@ services:
         condition: service_healthy
       localstack:
         condition: service_healthy
+
+  # Assina jobs.events no Redis e envia e-mail (Mailpit) em job.done / job.failed.
+  notifier:
+    build: *app-build
+    image: 4frames-core-api-dev
+    command: ['pnpm', '--filter', '@4frames/notifier', 'dev']
+    working_dir: /repo
+    volumes: *app-volumes
+    env_file: .env
+    environment: *container-endpoints
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
 
   postgres:
     image: postgres:16-alpine
