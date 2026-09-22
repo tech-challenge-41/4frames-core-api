@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { EnvValidationError, parseEnv } from '@4frames/shared/env';
 
-import { workerEnvSchema } from './worker-env';
+import { parseWorkerEnv, workerEnvSchema } from './worker-env';
 
 const REQUIRED = {
   S3_BUCKET_NAME: '4frames-videos',
@@ -25,8 +25,12 @@ describe('workerEnvSchema', () => {
       WORKER_HEALTH_PORT: 9100,
       WORKER_SHUTDOWN_TIMEOUT_SECONDS: 570,
       FFMPEG_TIMEOUT_SECONDS: 1800,
-      WORKER_CONCURRENCY: 2
+      WORKER_MAX_PARALLEL_JOBS: 2
     });
+  });
+
+  it('should treat WORKER_CONCURRENCY as an alias for WORKER_MAX_PARALLEL_JOBS', () => {
+    expect(parseWorkerEnv({ ...REQUIRED, WORKER_CONCURRENCY: '4' }).WORKER_MAX_PARALLEL_JOBS).toBe(4);
   });
 
   it('should coerce numbers from the environment', () => {

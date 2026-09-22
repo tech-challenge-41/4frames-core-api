@@ -93,7 +93,7 @@ services:
       <<: *container-endpoints
       WORKER_TMP_DIR: /tmp/4frames
       # Vários jobs em paralelo no mesmo container (além de `docker compose up --scale worker=N`).
-      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+      WORKER_MAX_PARALLEL_JOBS: ${WORKER_MAX_PARALLEL_JOBS:-${WORKER_CONCURRENCY:-2}}
       # O migrate já gerou o Prisma Client e compilou o shared; api e worker sobem juntos.
       SKIP_SHARED_BUILD: '1'
     # Cobre um job inteiro depois do SIGTERM (WORKER_SHUTDOWN_TIMEOUT_SECONDS fica abaixo disso).

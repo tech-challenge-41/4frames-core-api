@@ -251,6 +251,29 @@ describe('SqsConsumer', () => {
     expect(Date.now() - startedAt).toBeLessThan(1000);
   });
 
+  it('should process up to maxParallelJobs messages concurrently', async () => {
+    const sqs = createFakeSqs([[buildMessage('1'), buildMessage('2')], [buildMessage('3')]]);
+    let active = 0;
+    let maxActive = 0;
+    const handler: MessageHandler = jest.fn(async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise(resolve => setTimeout(resolve, 30));
+      active -= 1;
+
+      return { action: 'delete' };
+    });
+    const consumer = createConsumer({ sqs, handler, maxParallelJobs: 2 });
+
+    void consumer.start();
+
+    await waitFor(() => {
+      expect(handler).toHaveBeenCalledTimes(3);
+      expect(sqs.inputsOf(DeleteMessageCommand)).toHaveLength(3);
+    });
+    expect(maxActive).toBe(2);
+  });
+
   it('should report not alive when the loop has been silent for too long', async () => {
     let clock = 0;
     const sqs = createFakeSqs([]);

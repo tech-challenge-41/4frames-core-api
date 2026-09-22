@@ -277,8 +277,8 @@ Not hexagonal like the API, but the same idea: `processing/process-video-job.use
 depends only on the interfaces in `processing/ports.ts`; adapters live next to it.
 
 ```
-config/worker-env.ts          zod schema for every worker variable (defaults: FRAME_FPS=1, FRAME_FORMAT=png, WORKER_CONCURRENCY=2)
-consumer/sqs-consumer.ts      generic SQS loop: long polling, 1 message at a time per consumer, visibility heartbeat, stop()
+config/worker-env.ts          zod schema for every worker variable (defaults: FRAME_FPS=1, FRAME_FORMAT=png, WORKER_MAX_PARALLEL_JOBS=2)
+consumer/sqs-consumer.ts      generic SQS loop: long polling, up to maxParallelJobs handlers in parallel (Promises), visibility heartbeat, stop()
 consumer/video-upload-handler.ts  S3 event → use case (ignores s3:TestEvent, deletes malformed messages)
 consumer/dlq-handler.ts       dead-lettered message → FAILED "Falha após 3 tentativas" + job.failed
 processing/                   use case, ports, InvalidVideoError + FAILURE_REASONS, source key parsing
@@ -298,10 +298,10 @@ storage/ zip/ repo/ progress/ health/   S3 (lib-storage), archiver, Prisma, Redi
   `UPLOAD_PENDING` is polled for up to 30 s, then the message is returned to the queue.
 - `stop()` aborts the long poll and waits for the current message; `isAlive()` stays true while that job
   finishes, so a liveness probe never kills a pod during graceful shutdown.
-- **Parallel jobs**: `main.ts` starts `WORKER_CONCURRENCY` independent `SqsConsumer` instances on the
-  uploads queue (default **2**, max 32, env `WORKER_CONCURRENCY`). Each consumer handles one message at a
-  time; temp files are isolated under `WORKER_TMP_DIR/{jobId}`. In Compose, set `WORKER_CONCURRENCY` or
-  `docker compose up --scale worker=N` for more throughput. Production scaling is still KEDA réplicas per ADR-002.
+- **Parallel jobs**: one `SqsConsumer` on the uploads queue runs up to `WORKER_MAX_PARALLEL_JOBS` handlers
+  concurrently on the Node event loop (default **2**, max 32; `WORKER_CONCURRENCY` is a deprecated alias).
+  Each job spawns its own ffmpeg; temp files are isolated under `WORKER_TMP_DIR/{jobId}`. In Compose, tune
+  `WORKER_MAX_PARALLEL_JOBS` and/or `docker compose up --scale worker=N`. Production scaling is still KEDA réplicas per ADR-002.
 - Tests: unit specs next to the code (fake runner for ffmpeg, fake SQS client). `test/integration` runs real
   ffmpeg on `test/fixtures` and skips when ffmpeg is not in PATH (run them inside the worker container).
 
@@ -317,7 +317,7 @@ storage/ zip/ repo/ progress/ health/   S3 (lib-storage), archiver, Prisma, Redi
   never leak into the Linux container.
 - `apps/worker/dev.Dockerfile` is the same base plus `ffmpeg`, with the same entrypoint. The `worker` service
   sets `SKIP_SHARED_BUILD=1` (migrate already built `shared`; api and worker start together),
-  `WORKER_CONCURRENCY` (default 2) for parallel SQS consumers in one container, and runs the compiled worker
+  `WORKER_MAX_PARALLEL_JOBS` (default 2) for parallel video jobs in one container, and runs the compiled worker
   with `exec node` under `init: true`, not `ts-node-dev`: ts-node-dev exits on SIGTERM without waiting for its
   child, which would break graceful shutdown. `stop_grace_period` is 10 min.
 - The `notifier` service uses the same dev image/entrypoint as `api`, `pnpm --filter @4frames/notifier dev`,
@@ -386,7 +386,7 @@ started here):**
 - No local Kubernetes cluster, Ingress, HPA or KEDA — everything today runs via
   `docker compose`, which ADR-002 explicitly calls the _development_ environment,
   not the scaling mechanism. Parallel video processing is demonstrated locally with
-  `WORKER_CONCURRENCY` and/or `docker compose up --scale worker=N`, not with KEDA yet.
+  `WORKER_MAX_PARALLEL_JOBS` and/or `docker compose up --scale worker=N`, not with KEDA yet.
 - No CI/CD: only `.github/PULL_REQUEST_TEMPLATE.md` exists, no GitHub Actions
   workflow runs lint/test/build, publishes images to GHCR, or deploys to an
   ephemeral cluster.

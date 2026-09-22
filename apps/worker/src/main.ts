@@ -3,13 +3,12 @@ import '@4frames/shared/env/load';
 import fs from 'node:fs/promises';
 
 import { createS3Client, createSqsClient } from '@4frames/shared/aws';
-import { parseEnv } from '@4frames/shared/env';
 import { createLogger, type Logger } from '@4frames/shared/logger';
 import { prisma } from '@4frames/shared/prisma';
 import { registerGracefulShutdown } from '@4frames/shared/process';
 import { createRedisClient } from '@4frames/shared/redis';
 
-import { workerEnvSchema } from './config/worker-env';
+import { parseWorkerEnv } from './config/worker-env';
 import { createDlqHandler } from './consumer/dlq-handler';
 import { SqsConsumer } from './consumer/sqs-consumer';
 import { createVideoUploadHandler } from './consumer/video-upload-handler';
@@ -44,7 +43,7 @@ async function assertBinariesAvailable(logger: Logger): Promise<void> {
 }
 
 async function bootstrap(): Promise<void> {
-  const env = parseEnv(workerEnvSchema);
+  const env = parseWorkerEnv();
   const logger = createLogger({ base: { service: SERVICE_NAME } });
 
   await assertBinariesAvailable(logger);
@@ -76,18 +75,17 @@ async function bootstrap(): Promise<void> {
   });
 
   const uploadHandler = createVideoUploadHandler({ processVideoJob, bucket: env.S3_BUCKET_NAME, logger });
-  const consumers = Array.from(
-    { length: env.WORKER_CONCURRENCY },
-    (_, index) =>
-      new SqsConsumer({
-        name: `uploads-${index}`,
-        sqs,
-        queueUrl: env.SQS_QUEUE_URL,
-        handler: uploadHandler,
-        logger,
-        visibilityTimeoutSeconds: env.VISIBILITY_TIMEOUT_SECONDS
-      })
-  );
+  const consumers = [
+    new SqsConsumer({
+      name: 'uploads',
+      sqs,
+      queueUrl: env.SQS_QUEUE_URL,
+      handler: uploadHandler,
+      logger,
+      visibilityTimeoutSeconds: env.VISIBILITY_TIMEOUT_SECONDS,
+      maxParallelJobs: env.WORKER_MAX_PARALLEL_JOBS
+    })
+  ];
 
   if (env.SQS_DLQ_URL) {
     consumers.push(
@@ -132,7 +130,7 @@ async function bootstrap(): Promise<void> {
 
   logger.info('Worker started', {
     nodeEnv: env.NODE_ENV,
-    concurrency: env.WORKER_CONCURRENCY,
+    maxParallelJobs: env.WORKER_MAX_PARALLEL_JOBS,
     frameFps: env.FRAME_FPS,
     frameFormat: env.FRAME_FORMAT,
     maxVideoDurationSeconds: env.MAX_VIDEO_DURATION_SECONDS,

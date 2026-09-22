@@ -46,8 +46,8 @@ docker compose up -d --build
 ```
 
 Sobe Postgres, Redis, Mailpit, LocalStack, o serviço `migrate` (migrations e seed, depois encerra), a
-API em modo desenvolvimento em `http://localhost:3000`, o **worker** (por padrão **2 consumidores SQS** em paralelo via
-`WORKER_CONCURRENCY`; use `docker compose up --scale worker=N` para mais réplicas) e o **notifier** (e-mail em
+API em modo desenvolvimento em `http://localhost:3000`, o **worker** (por padrão **2 vídeos em paralelo** no mesmo
+processo via `WORKER_MAX_PARALLEL_JOBS`; use `docker compose up --scale worker=N` para mais réplicas) e o **notifier** (e-mail em
 `job.done`/`job.failed` via SMTP conforme `SMTP_*` no `.env` — ex.: Mailtrap ou Mailpit em http://localhost:8025).
 
 Para recriar só o notificador após mudanças no código: `docker compose up -d --build notifier`.
