@@ -23,7 +23,11 @@ const config: Config = {
     'src/infra/http/route/index.ts',
     'src/main.ts',
     'src/types.d.ts'
-  ]
+  ],
+  // Gate de cobertura do CI (sem SonarCloud). Subir conforme a cobertura crescer.
+  coverageThreshold: {
+    global: { statements: 70, branches: 55, functions: 70, lines: 70 }
+  }
 };
 
 export default config;

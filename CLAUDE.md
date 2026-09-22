@@ -24,6 +24,8 @@ packages/
       process/    registerGracefulShutdown
       generated/  Prisma Client output (gitignored, created by `pnpm db:generate`)
 infra/localstack/init/             LocalStack bootstrap scripts
+infra/k8s/                         Kustomize manifests (api, worker, notifier) + overlays local/ci
+.github/workflows/                 ci.yml (test→lint→type-check→k8s→build) + cd.yml (release-* → GHCR + Kind smoke)
 docs/adr/                          architecture decisions: ADR-001 (PDF, AWS design) + ADR-002 (local run, monorepo, UUID)
 tsconfig.base.json                 compiler options shared by every package
 eslint.config.js, .prettierrc.js   one lint config for the whole repo

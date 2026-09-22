@@ -13,6 +13,7 @@ const config: Config = {
   clearMocks: true,
   coverageDirectory: 'coverage',
   collectCoverageFrom: ['src/**/*.ts', '!src/**/*.spec.ts', '!src/**/__tests__/**', '!src/main.ts'],
+  // Scaffold sem testes ainda: coverageThreshold entra quando houver código cobrível além do main.
   testPathIgnorePatterns: ['/node_modules/', '/dist/']
 };
 

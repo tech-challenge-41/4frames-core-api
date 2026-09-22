@@ -21,7 +21,7 @@ que mudou em relação ao ADR-001.
 | `apps/worker`     | `@4frames/worker`   | Worker: consome a fila SQS, extrai os frames com ffmpeg, gera o zip e publica o progresso        |
 | `apps/notifier`   | `@4frames/notifier` | Notificador por e-mail (scaffold; assinatura de eventos no Card 4)                               |
 | `packages/shared` | `@4frames/shared`   | Prisma (schema, migrations, seeds e client), env, logger, contratos de job, clientes AWS e Redis |
-| `infra/`          | –                   | Scripts de init do LocalStack                                                                    |
+| `infra/`          | –                   | LocalStack (`localstack/init`) e manifestos Kubernetes (`k8s/`)                                  |
 
 A API segue arquitetura hexagonal em `apps/api/src`: `domain` (ports e erros), `application`
 (use cases e DTOs), `infra` (HTTP, serviços, logging) e `dependencies` (container de DI).
@@ -127,10 +127,22 @@ As imagens de produção são construídas a partir da raiz do monorepo:
 ```bash
 docker build -f apps/api/Dockerfile -t 4frames-api .
 docker build -f apps/worker/Dockerfile -t 4frames-worker .
+docker build -f apps/notifier/Dockerfile -t 4frames-notifier .
 ```
 
 A imagem do worker instala `ffmpeg` (como o projeto base), roda como usuário `node` e expõe a porta `9100`
 (`/healthz`).
+
+## CI/CD (GitHub Actions)
+
+- **CI** (`.github/workflows/ci.yml`), em PR e push para `develop`/`main`: `test` (com gate de cobertura Jest, sem
+  SonarCloud) → `lint` → `type-check` → validação dos manifestos Kubernetes → build das imagens `api`, `worker` e
+  `notifier`.
+- **CD** (`.github/workflows/cd.yml`), em tag `release-*`: publica as imagens versionadas no GHCR, sobe um cluster Kind
+  efêmero, aplica `infra/k8s/overlays/ci` e roda smoke (`/health-check`, `/healthz`, pod do notifier Running).
+
+Deploy da mesma tag num cluster local, só trocando as tags de imagem: [infra/k8s/README.md](./infra/k8s/README.md).
+Regras de merge (CI verde + revisão de outra pessoa, sem branch protection no plano Free): [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## Endpoints
 
