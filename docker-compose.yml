@@ -29,7 +29,11 @@ x-container-endpoints: &container-endpoints
   SQS_QUEUE_URL: http://localstack:4566/000000000000/4frames-video-uploads
   SQS_DLQ_URL: http://localstack:4566/000000000000/4frames-video-uploads-dlq
   REDIS_URL: redis://redis:6379
-  # SMTP (notifier): não sobrescrever — usa SMTP_* / SMTP_PASSWORD do .env (Mailtrap, Mailpit, etc.).
+  # O notifier usa o Mailpit deste Compose (ADR-002 §2.1): o .env aponta para localhost:1025, que
+  # dentro do container é o serviço `mailpit`. Para usar um provedor SMTP externo no Compose,
+  # comente estas duas linhas — aí valem SMTP_HOST/SMTP_PORT do .env.
+  SMTP_HOST: mailpit
+  SMTP_PORT: '1025'
 
 services:
   # One-shot: aplica migrations e seed antes da API subir.
@@ -127,6 +131,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mailpit:
+        condition: service_started
       api:
         condition: service_started
       worker:

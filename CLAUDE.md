@@ -235,7 +235,7 @@ producer, only a subscriber.
 
 - One `.env` at the root, with **host** addresses (`localhost`). Apps started with `pnpm dev:*` use it
   as is. The `migrate` and `api` Compose services load the same file and override only the internal
-  hosts through the `x-container-endpoints` block (`postgres`, `localstack`, `redis`). SMTP stays in `.env`.
+  hosts through the `x-container-endpoints` block (`postgres`, `localstack`, `redis`, `mailpit`).
   When you add an env var that points to another container, add its override there too.
 - `docker compose up -d --build` runs everything; `docker compose up -d postgres redis mailpit localstack`
   runs only infrastructure for host development. Both modes bind the API to port 3000.
@@ -321,7 +321,7 @@ storage/ zip/ repo/ progress/ health/   S3 (lib-storage), archiver, Prisma, Redi
   with `exec node` under `init: true`, not `ts-node-dev`: ts-node-dev exits on SIGTERM without waiting for its
   child, which would break graceful shutdown. `stop_grace_period` is 10 min.
 - The `notifier` service uses the same dev image/entrypoint as `api`, `pnpm --filter @4frames/notifier dev`,
-  `SKIP_SHARED_BUILD=1`, SMTP from `.env` (Mailtrap/Mailpit), starts with `docker compose up` alongside api/worker.
+  `SKIP_SHARED_BUILD=1`, SMTP pointed at the Compose `mailpit`, starts with `docker compose up` alongside api/worker.
 - `apps/worker/Dockerfile` (production) installs `ffmpeg`, runs `node dist/main.js` as `node` and exposes 9100.
 
 ## Commands (run at the repo root)
