@@ -251,6 +251,59 @@ describe('SqsConsumer', () => {
     expect(Date.now() - startedAt).toBeLessThan(1000);
   });
 
+  it('should process up to maxParallelJobs messages concurrently', async () => {
+    const sqs = createFakeSqs([[buildMessage('1'), buildMessage('2')], [buildMessage('3')]]);
+    let active = 0;
+    let maxActive = 0;
+    const handler: MessageHandler = jest.fn(async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise(resolve => setTimeout(resolve, 30));
+      active -= 1;
+
+      return { action: 'delete' };
+    });
+    const consumer = createConsumer({ sqs, handler, maxParallelJobs: 2 });
+
+    void consumer.start();
+
+    await waitFor(() => {
+      expect(handler).toHaveBeenCalledTimes(3);
+      expect(sqs.inputsOf(DeleteMessageCommand)).toHaveLength(3);
+    });
+    expect(maxActive).toBe(2);
+  });
+
+  it('should keep polling after an empty poll while a long job is still running', async () => {
+    // Um poll vazio no meio de um job longo: antes, o laço esperava o job terminar para voltar a
+    // buscar, e uma mensagem que chegasse logo depois ficava parada na fila.
+    const sqs = createFakeSqs([[buildMessage('long')], [], [buildMessage('next')]]);
+    const started: string[] = [];
+    let releaseLongJob: () => void = () => undefined;
+    const handler: MessageHandler = jest.fn(async message => {
+      started.push(message.MessageId as string);
+
+      if (message.MessageId === 'long') {
+        await new Promise<void>(resolve => {
+          releaseLongJob = resolve;
+        });
+      }
+
+      return { action: 'delete' };
+    });
+    const consumer = createConsumer({ sqs, handler, maxParallelJobs: 2 });
+
+    void consumer.start();
+
+    try {
+      await waitFor(() => expect(started).toEqual(['long', 'next']));
+    } finally {
+      // Sempre: sem liberar o job longo, o stop() do afterEach espera por ele para sempre e a
+      // suíte trava em vez de reportar a falha.
+      releaseLongJob();
+    }
+  });
+
   it('should report not alive when the loop has been silent for too long', async () => {
     let clock = 0;
     const sqs = createFakeSqs([]);

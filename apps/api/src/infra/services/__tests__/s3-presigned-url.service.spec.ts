@@ -52,6 +52,23 @@ describe('S3PresignedUrlService', () => {
     expect(new URL(uploadUrl).origin).toBe('http://localstack:4566');
   });
 
+  it('should sign download URLs with the public endpoint, not the internal one', async () => {
+    const service = new S3PresignedUrlService({
+      bucketName: '4frames-videos',
+      client: internalClient,
+      presignClient: publicClient
+    });
+
+    const zipKey = 'zips/1/6f1c2a9e-4b7d-4c1a-9f3e-2d8b5a7c9e10.zip';
+    const { downloadUrl, expiresIn } = await service.generatePresignedDownloadUrl(zipKey, 300);
+    const url = new URL(downloadUrl);
+
+    expect(url.origin).toBe('http://localhost:4566');
+    expect(url.pathname).toBe(`/4frames-videos/${zipKey}`);
+    expect(url.searchParams.get('X-Amz-Expires')).toBe('300');
+    expect(expiresIn).toBe(300);
+  });
+
   it('should check the object through the internal client', async () => {
     const internalSend = jest.spyOn(internalClient, 'send').mockResolvedValue({} as never);
     const publicSend = jest.spyOn(publicClient, 'send');

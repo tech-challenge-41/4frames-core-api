@@ -9,7 +9,7 @@ and a shared package. Read this before adding or changing any endpoint or packag
 apps/
   api/          @4frames/api       Express 5 REST API (hexagonal, see "Layers" below)
   worker/       @4frames/worker    SQS consumer + ffmpeg: frames, zip, job status and progress (see "Worker" below)
-  notifier/     @4frames/notifier  Redis subscriber + email (scaffold only: main.ts with graceful shutdown)
+  notifier/     @4frames/notifier  Redis `jobs.events` subscriber, SMTP e-mail (Pug templates), recovery sweep, /healthz
 packages/
   shared/       @4frames/shared    code and contracts used by more than one app
     prisma/                        schema.prisma, models/*.prisma, migrations/, seeds/
@@ -22,6 +22,7 @@ packages/
       aws/        createS3Client, createSqsClient
       redis/      createRedisClient (lazyConnect)
       process/    registerGracefulShutdown
+      health/     HealthServer: GET /healthz for the worker and notifier liveness probes
       generated/  Prisma Client output (gitignored, created by `pnpm db:generate`)
 infra/localstack/init/             LocalStack bootstrap scripts
 infra/k8s/                         Kustomize manifests (api, worker, notifier) + overlays local/ci
@@ -38,8 +39,8 @@ docker-compose.yml, .env           one Compose file and one .env at the root
   between apps (S3 keys, Redis channels, event payloads, statuses). App-specific code stays in
   the app. No Express, HTTP or request-scoped code in `shared`.
 - Import through subpaths, never deep paths: `@4frames/shared/prisma`, `/env`, `/logger`,
-  `/jobs`, `/aws`, `/redis`, `/process`. The root `@4frames/shared` only re-exports the light
-  modules (env, jobs, logger, process). Prisma, AWS and Redis stay behind subpaths so importing
+  `/jobs`, `/aws`, `/redis`, `/process`, `/health`. The root `@4frames/shared` only re-exports the
+  light modules (env, jobs, logger, process, health). Prisma, AWS and Redis stay behind subpaths so importing
   a contract never opens a database connection or loads an SDK.
 - Apps resolve `@4frames/shared` at runtime and in `tsc` through the package `exports`, which
   point to `dist`. After changing `shared`, run `pnpm --filter @4frames/shared build` (or keep
@@ -92,9 +93,11 @@ Prisma directly from a controller. Infra services get Prisma from
 
 ## Adding a new endpoint
 
-Follow the exact shape of the `video` aggregate (`create-video-job`,
-`complete-video-job`, `get-video-job-status`) — don't invent a new convention.
-All paths below are relative to `apps/api/src`.
+Follow the exact shape of the `video` aggregate — `create-video-job`,
+`complete-video-job`, `cancel-video-job`, `get-video-job-status`,
+`get-video-job-download-url`, `list-video-jobs`, and `get-video-job-events` (SSE,
+see its own note below) — don't invent a new convention. All paths below are
+relative to `apps/api/src`.
 
 1. **Port** (if a new infra capability is needed): add a method to the relevant
    `domain/ports/service/*.interface.ts`, or create a new interface if it's a new
@@ -111,8 +114,12 @@ All paths below are relative to `apps/api/src`.
    `InvalidRequestParamError` (400) — see `CompleteVideoJobController`.
 4. **Controller**: `infra/http/controller/<aggregate>/<action>.controller.ts`,
    implements `IController` (single `handle(req, res)` method). One controller per
-   route, not one per aggregate — e.g. video has three separate controllers, not
-   one `VideoController` with multiple methods.
+   route, not one per aggregate — video has seven separate controllers, not one
+   `VideoController` with multiple methods. The one exception is
+   `GetVideoJobEventsController` (SSE): it still implements `IController`, but its
+   `handle()` keeps the connection open and resolves only when the stream ends —
+   see the comment at the top of that file before copying its shape for a
+   non-streaming endpoint.
 5. **Route**: wire it into the aggregate's existing `infra/http/route/<aggregate>.ts`.
    Apply `authMiddleware` for any route requiring a logged-in user, then
    `validateMiddleware(schema)` if there's a body schema, then
@@ -189,6 +196,44 @@ but belongs to another user" identically — same `DomainError` with
 different error/status. See `CompleteVideoJobUseCase` and
 `GetVideoJobStatusUseCase` for the reference implementation.
 
+## Real-time progress (SSE)
+
+`GET /videos/:jobId/events` streams job progress as it happens, instead of the
+frontend having to poll `GET /videos/:jobId`. It is fed by the same Redis Pub/Sub
+channel the worker already publishes to (see "Worker" below) — the API adds no new
+producer, only a subscriber.
+
+- `RedisJobEventSubscriberService` (`infra/services/`) opens one **dedicated**
+  Redis connection per SSE connection via `createRedisClient()` — never the
+  request-scoped or a shared client, because a connection in subscriber mode stops
+  accepting other commands. It reads the current value of `progress:{jobId}`
+  before subscribing (so a client connecting mid-processing doesn't wait for the
+  next throttled publish) and closes the connection when the HTTP request/response
+  closes.
+- Progress percentages come straight from ffmpeg's own `-progress pipe:1` output
+  (parsed against the real video duration from `ffprobe`), not a fixed timer or an
+  estimate — see "Worker" below. A short video can look like it "jumps" because the
+  0–85% range is throttled to at most one update per second, and 85→90→99→100 are
+  fixed checkpoints for zip/upload/done, not a continuous measurement of those
+  steps.
+- Authorization runs once, via `GetVideoJobStatusUseCase`, **before** `res.writeHead`
+  — a `DomainError` there is still translated normally by `controllerWrapper`.
+  After the stream starts, an error is written as an SSE `{ type: 'error', message }`
+  event and the stream ends; there's no way to send an HTTP error status anymore.
+- `EventSource` in the browser can't send custom headers, so `Authorization: Bearer`
+  doesn't reach this route. `sseAuthMiddleware` (not `authMiddleware`) accepts the
+  token via `?token=` as a fallback, restricted to this one route — an
+  `Authorization` header is still tried first (for curl/tests). A token in a query
+  string can leak into access logs and proxies; don't reuse this middleware
+  elsewhere.
+- The stream ends itself on a terminal event (`job.done`/`job.failed`); a 15s
+  heartbeat comment (`: heartbeat\n\n`) keeps proxies from closing an idle
+  connection meanwhile.
+- The frontend keeps `GET /videos/:jobId` polling running in parallel as the
+  source of truth for status; SSE only adds the live percentage during
+  `PROCESSING`. `EventSource` reconnects on its own, so a dropped SSE connection
+  is not treated as fatal on either side.
+
 ## Local environment (Compose + LocalStack)
 
 - One `.env` at the root, with **host** addresses (`localhost`). Apps started with `pnpm dev:*` use it
@@ -235,13 +280,14 @@ Not hexagonal like the API, but the same idea: `processing/process-video-job.use
 depends only on the interfaces in `processing/ports.ts`; adapters live next to it.
 
 ```
-config/worker-env.ts          zod schema for every worker variable (defaults: FRAME_FPS=1, FRAME_FORMAT=png)
-consumer/sqs-consumer.ts      generic SQS loop: long polling, 1 message at a time, visibility heartbeat, stop()
+config/worker-env.ts          zod schema for every worker variable (defaults: FRAME_FPS=1, FRAME_FORMAT=png, WORKER_MAX_PARALLEL_JOBS=2)
+consumer/sqs-consumer.ts      generic SQS loop: long polling, up to maxParallelJobs handlers in parallel (Promises), visibility heartbeat, stop()
 consumer/video-upload-handler.ts  S3 event → use case (ignores s3:TestEvent, deletes malformed messages)
 consumer/dlq-handler.ts       dead-lettered message → FAILED "Falha após 3 tentativas" + job.failed
 processing/                   use case, ports, InvalidVideoError + FAILURE_REASONS, source key parsing
 ffmpeg/                       run-process (spawn), ffprobe validation, frame extraction with -progress
-storage/ zip/ repo/ progress/ health/   S3 (lib-storage), archiver, Prisma, Redis publisher, /healthz
+storage/ zip/ repo/ progress/ S3 (lib-storage), archiver, Prisma, Redis publisher
+                              (/healthz comes from @4frames/shared/health)
 ```
 
 - Error classification is the core rule. `InvalidVideoError` (the video's fault) → `FAILED` with a Portuguese,
@@ -256,6 +302,10 @@ storage/ zip/ repo/ progress/ health/   S3 (lib-storage), archiver, Prisma, Redi
   `UPLOAD_PENDING` is polled for up to 30 s, then the message is returned to the queue.
 - `stop()` aborts the long poll and waits for the current message; `isAlive()` stays true while that job
   finishes, so a liveness probe never kills a pod during graceful shutdown.
+- **Parallel jobs**: one `SqsConsumer` on the uploads queue runs up to `WORKER_MAX_PARALLEL_JOBS` handlers
+  concurrently on the Node event loop (default **2**, max 32; `WORKER_CONCURRENCY` is a deprecated alias).
+  Each job spawns its own ffmpeg; temp files are isolated under `WORKER_TMP_DIR/{jobId}`. In Compose, tune
+  `WORKER_MAX_PARALLEL_JOBS` and/or `docker compose up --scale worker=N`. Production scaling is still KEDA réplicas per ADR-002.
 - Tests: unit specs next to the code (fake runner for ffmpeg, fake SQS client). `test/integration` runs real
   ffmpeg on `test/fixtures` and skips when ffmpeg is not in PATH (run them inside the worker container).
 
@@ -270,9 +320,12 @@ storage/ zip/ repo/ progress/ health/   S3 (lib-storage), archiver, Prisma, Redi
   service command. Each package's `node_modules` is an anonymous volume so host-installed modules
   never leak into the Linux container.
 - `apps/worker/dev.Dockerfile` is the same base plus `ffmpeg`, with the same entrypoint. The `worker` service
-  sets `SKIP_SHARED_BUILD=1` (migrate already built `shared`; api and worker start together) and runs the
-  compiled worker with `exec node` under `init: true`, not `ts-node-dev`: ts-node-dev exits on SIGTERM
-  without waiting for its child, which would break graceful shutdown. `stop_grace_period` is 10 min.
+  sets `SKIP_SHARED_BUILD=1` (migrate already built `shared`; api and worker start together),
+  `WORKER_MAX_PARALLEL_JOBS` (default 2) for parallel video jobs in one container, and runs the compiled worker
+  with `exec node` under `init: true`, not `ts-node-dev`: ts-node-dev exits on SIGTERM without waiting for its
+  child, which would break graceful shutdown. `stop_grace_period` is 10 min.
+- The `notifier` service uses the same dev image/entrypoint as `api`, `pnpm --filter @4frames/notifier dev`,
+  `SKIP_SHARED_BUILD=1`, SMTP pointed at the Compose `mailpit`, starts with `docker compose up` alongside api/worker.
 - `apps/worker/Dockerfile` (production) installs `ffmpeg`, runs `node dist/main.js` as `node` and exposes 9100.
 
 ## Commands (run at the repo root)
@@ -306,16 +359,39 @@ For endpoints touching S3, do a real curl smoke test against LocalStack
 thin Prisma/AWS SDK adapters), so a manual end-to-end check is the only thing
 that catches integration issues like the CORS/checksum gaps above.
 
-## Known gaps (per ADR-001)
+## What's implemented (video job lifecycle, per ADR-001 §2.2)
 
-- `apps/notifier` only starts, logs and shuts down gracefully: nobody consumes `jobs.events` yet, so no
-  email is sent. `.env.example` already lists `SMTP_*`, `MAIL_FROM` and `WEB_APP_URL`, which no app reads yet.
-- No `GET /videos` (list jobs for the current user).
-- No `GET /videos/:jobId/download` (presigned/CloudFront download URL when
-  `DONE`).
-- The worker writes `failure_reason`, `zip_key`, `frame_count` and `duration_seconds`; `notified_at` and
-  `correlation_id` are still unused (notifier and correlation logging come later). Only `failure_reason`
-  is exposed by the API, in `GET /videos/:jobId`.
+The full lifecycle of a job is implemented and tested end to end (many jobs per user and parallel
+processing via SQS + multiple worker consumers/réplicas):
+`POST /videos` (create + presigned upload URL) → direct browser `PUT` to S3 →
+`POST /videos/:jobId/complete` (confirm + `QUEUED`) →
+`POST /videos/:jobId/cancel` (cancel while `UPLOAD_PENDING`/`QUEUED`, reuses the
+`EXPIRED` status — see the comment on `VideoJobService.cancelIfPending`, no
+separate `CANCELLED` status was added) → S3 event → SQS → `apps/worker` (ffmpeg
+frames + zip, `PROCESSING` → `DONE`/`FAILED`) →
+`GET /videos/:jobId` (status polling) and `GET /videos/:jobId/events` (SSE live
+progress) → `GET /videos/:jobId/download` (presigned S3 `GET`, only when `DONE`)
+→ `GET /videos` (paginated list of the current user's jobs, `offset`/`limit`,
+ordered by `created_at desc`).
+
+## Known gaps
+
+**Application-level (per ADR-001):**
+
+- `correlation_id` on `video_jobs` is still unused for correlated logging across
+  api/worker/notifier (field exists; propagation not wired end-to-end).
 - `POST /auth` vs. the ADR's documented `POST /auth/login` — the route name
   never got reconciled with the ADR text; not a functional issue, just a doc
   mismatch to be aware of.
+
+**Infrastructure-level (per ADR-002, all "Previsto"/planned in that ADR, not
+started here):**
+
+- No local Kubernetes cluster, Ingress, HPA or KEDA — everything today runs via
+  `docker compose`, which ADR-002 explicitly calls the _development_ environment,
+  not the scaling mechanism. Parallel video processing is demonstrated locally with
+  `WORKER_MAX_PARALLEL_JOBS` and/or `docker compose up --scale worker=N`, not with KEDA yet.
+- No CI/CD: only `.github/PULL_REQUEST_TEMPLATE.md` exists, no GitHub Actions
+  workflow runs lint/test/build, publishes images to GHCR, or deploys to an
+  ephemeral cluster.
+- No Prometheus/Grafana; no metrics exported beyond what's in application logs.

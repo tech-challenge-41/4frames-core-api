@@ -19,7 +19,7 @@ que mudou em relação ao ADR-001.
 | ----------------- | ------------------- | ------------------------------------------------------------------------------------------------ |
 | `apps/api`        | `@4frames/api`      | API REST (Express 5): login JWT, jobs de vídeo e URLs pré-assinadas                              |
 | `apps/worker`     | `@4frames/worker`   | Worker: consome a fila SQS, extrai os frames com ffmpeg, gera o zip e publica o progresso        |
-| `apps/notifier`   | `@4frames/notifier` | Notificador por e-mail (scaffold; assinatura de eventos no Card 4)                               |
+| `apps/notifier`   | `@4frames/notifier` | Assina `jobs.events`, envia e-mail (Pug + SMTP/Mailpit) e recupera jobs sem `notified_at`        |
 | `packages/shared` | `@4frames/shared`   | Prisma (schema, migrations, seeds e client), env, logger, contratos de job, clientes AWS e Redis |
 | `infra/`          | –                   | LocalStack (`localstack/init`) e manifestos Kubernetes (`k8s/`)                                  |
 
@@ -46,7 +46,11 @@ docker compose up -d --build
 ```
 
 Sobe Postgres, Redis, Mailpit, LocalStack, o serviço `migrate` (migrations e seed, depois encerra), a
-API em modo desenvolvimento em `http://localhost:3000` e o worker.
+API em modo desenvolvimento em `http://localhost:3000`, o **worker** (por padrão **2 vídeos em paralelo** no mesmo
+processo via `WORKER_MAX_PARALLEL_JOBS`; use `docker compose up --scale worker=N` para mais réplicas) e o **notifier** (e-mail em
+`job.done`/`job.failed` pelo SMTP do Mailpit, com a caixa em http://localhost:8025).
+
+Para recriar só o notificador após mudanças no código: `docker compose up -d --build notifier`.
 
 ### Apps no host
 
@@ -66,13 +70,14 @@ pnpm dev:api
 
 ### Serviços locais
 
-| Serviço    | Endereço                                               | Para quê                   |
-| ---------- | ------------------------------------------------------ | -------------------------- |
-| API        | http://localhost:3000 (`/api-docs`)                    | REST                       |
-| PostgreSQL | localhost:5432                                         | Banco                      |
-| LocalStack | http://localhost:4566                                  | S3 e SQS                   |
-| Redis      | localhost:6379                                         | Progresso e eventos de job |
-| Mailpit    | SMTP em localhost:1025, caixa em http://localhost:8025 | E-mails de desenvolvimento |
+| Serviço    | Endereço                                                                           | Para quê                                     |
+| ---------- | ---------------------------------------------------------------------------------- | -------------------------------------------- |
+| API        | http://localhost:3000 (`/api-docs`)                                                | REST                                         |
+| PostgreSQL | localhost:5432                                                                     | Banco                                        |
+| LocalStack | http://localhost:4566                                                              | S3 e SQS                                     |
+| Redis      | localhost:6379                                                                     | Progresso e eventos de job                   |
+| Mailpit    | SMTP em localhost:1025 (`mailpit:1025` no Compose), caixa em http://localhost:8025 | E-mails de desenvolvimento (substitui o SES) |
+| Notifier   | `GET /healthz` na porta 9100; logs via `docker compose logs -f notifier`           | E-mail ao terminar/falhar job                |
 
 ### Comandos (na raiz)
 
@@ -148,23 +153,33 @@ Regras de merge (CI verde + revisão de outra pessoa, sem branch protection no p
 
 - `POST /auth` — autenticação por email e senha
 - `POST /videos` — cria um job de conversão (`UPLOAD_PENDING`) e devolve uma URL pré-assinada de upload ao S3
-- `POST /videos/:jobId/complete` — confirma o upload no S3 (HEAD do objeto) e avança o job para `QUEUED`
+- `GET /videos` — lista os jobs do usuário autenticado, paginado (`limit`/`offset`), mais recentes primeiro
 - `GET /videos/:jobId` — consulta status do job (autorizado apenas para o dono)
+- `GET /videos/:jobId/events` — progresso em tempo real via SSE (Server-Sent Events), alimentado pelo Redis Pub/Sub que o worker publica
+- `POST /videos/:jobId/complete` — confirma o upload no S3 (HEAD do objeto) e avança o job para `QUEUED`
+- `POST /videos/:jobId/cancel` — cancela um job em `UPLOAD_PENDING` ou `QUEUED` (reaproveita o status `EXPIRED`)
+- `GET /videos/:jobId/download` — URL pré-assinada de download do `.zip` (só quando o job está `DONE`)
 - `GET /health-check` — health check
 - `GET /api-docs` — documentação OpenAPI
 
-Todas as rotas de `/videos` exigem `Authorization: Bearer <token>`. O `jobId` é um UUID; um valor em outro formato recebe `400`.
+Todas as rotas de `/videos` exigem `Authorization: Bearer <token>`, exceto `GET /videos/:jobId/events`,
+que aceita o token via `?token=` (o `EventSource` do navegador não permite headers customizados — ver
+[CLAUDE.md](./CLAUDE.md), seção "Real-time progress"). O `jobId` é um UUID; um valor em outro formato
+recebe `400`.
 
 ### Fluxo de conversão
 
 1. `POST /videos` com `{ fileName, fileSize, contentType }` (`video/mp4` ou `video/quicktime`, até 500MB) → devolve `{ jobId, uploadUrl, expiresIn }`, com `jobId` em UUID.
 2. O cliente faz `PUT` do arquivo direto na `uploadUrl` (bytes não passam pela API).
-3. `POST /videos/{jobId}/complete` → confirma o objeto no bucket e marca `QUEUED`.
-4. `GET /videos/{jobId}` → consulta o status a qualquer momento (`UPLOAD_PENDING` → `QUEUED` → `PROCESSING` → `DONE`/`FAILED`/`EXPIRED`).
+3. `POST /videos/{jobId}/complete` → confirma o objeto no bucket e marca `QUEUED`. Até esse ponto o job
+   ainda pode ser cancelado com `POST /videos/{jobId}/cancel`.
+4. `GET /videos/{jobId}` (polling) ou `GET /videos/{jobId}/events` (SSE, progresso ao vivo durante
+   `PROCESSING`) → acompanha o status: `UPLOAD_PENDING` → `QUEUED` → `PROCESSING` → `DONE`/`FAILED`/`EXPIRED`.
+5. Quando `DONE`, `GET /videos/{jobId}/download` devolve uma URL pré-assinada de `GET` para o `.zip`.
 
-O processamento é feito pelo worker (ver [Worker](#worker)). **Ainda não implementado** (ver ADR-001,
-seção 2.2): a listagem de jobs do usuário (`GET /videos`) e o download do resultado
-(`GET /videos/{jobId}/download`). O zip já fica no bucket em `zips/{userId}/{jobId}.zip`.
+O processamento em si é feito pelo worker (ver [Worker](#worker)). **Ainda não implementado**: o
+`apps/notifier` (envio de e-mail em `job.done`/`job.failed`), e toda a camada de infraestrutura do
+ADR-002 (Kubernetes local, CI/CD, observabilidade) — ver "Known gaps" no [CLAUDE.md](./CLAUDE.md).
 
 ## Worker
 

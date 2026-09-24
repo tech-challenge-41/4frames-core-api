@@ -17,6 +17,8 @@ function buildJob(overrides: Partial<VideoJobRecord> = {}): VideoJobRecord {
     fileSize: 1024,
     status: 'UPLOAD_PENDING',
     failureReason: null,
+    zipKey: null,
+    createdAt: new Date('2026-01-01T00:00:00.000Z'),
     ...overrides
   };
 }
@@ -30,11 +32,14 @@ describe('CompleteVideoJobUseCase', () => {
     videoJobService = {
       createUploadPendingJob: jest.fn(),
       findById: jest.fn(),
-      updateStatus: jest.fn()
+      updateStatus: jest.fn(),
+      listByUser: jest.fn(),
+      cancelIfPending: jest.fn()
     };
 
     videoStorageService = {
       generatePresignedUploadUrl: jest.fn(),
+      generatePresignedDownloadUrl: jest.fn(),
       headObject: jest.fn()
     };
 

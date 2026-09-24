@@ -15,11 +15,14 @@ describe('CreateVideoJobUseCase', () => {
     videoJobService = {
       createUploadPendingJob: jest.fn(),
       findById: jest.fn(),
-      updateStatus: jest.fn()
+      updateStatus: jest.fn(),
+      listByUser: jest.fn(),
+      cancelIfPending: jest.fn()
     };
 
     videoStorageService = {
       generatePresignedUploadUrl: jest.fn(),
+      generatePresignedDownloadUrl: jest.fn(),
       headObject: jest.fn()
     };
 
@@ -37,7 +40,9 @@ describe('CreateVideoJobUseCase', () => {
       contentType: 'video/mp4',
       fileSize: 1024,
       status: 'UPLOAD_PENDING',
-      failureReason: null
+      failureReason: null,
+      zipKey: null,
+      createdAt: new Date('2026-01-01T00:00:00.000Z')
     });
 
     videoStorageService.generatePresignedUploadUrl.mockResolvedValue({
@@ -78,7 +83,9 @@ describe('CreateVideoJobUseCase', () => {
       contentType: 'video/quicktime',
       fileSize: 2048,
       status: 'UPLOAD_PENDING',
-      failureReason: null
+      failureReason: null,
+      zipKey: null,
+      createdAt: new Date('2026-01-01T00:00:00.000Z')
     });
 
     videoStorageService.generatePresignedUploadUrl.mockResolvedValue({
@@ -123,7 +130,9 @@ describe('CreateVideoJobUseCase', () => {
       contentType: 'video/mp4',
       fileSize: 1024,
       status: 'UPLOAD_PENDING',
-      failureReason: null
+      failureReason: null,
+      zipKey: null,
+      createdAt: new Date('2026-01-01T00:00:00.000Z')
     });
     videoStorageService.generatePresignedUploadUrl.mockResolvedValue({
       uploadUrl: 'https://s3.example.com/signed-url',

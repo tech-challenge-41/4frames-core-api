@@ -9,13 +9,20 @@
   ],
   "scripts": {
     "dev": "ts-node-dev -r tsconfig-paths/register --respawn --transpile-only src/main.ts",
-    "build": "tsc && tsc-alias",
+    "build": "tsc && tsc-alias && cp -R src/infra/notifications/email/templates dist/infra/notifications/email/templates",
     "type-check": "tsc --noEmit",
     "start": "node dist/main.js",
     "test": "jest --coverage --passWithNoTests"
   },
   "dependencies": {
     "@4frames/shared": "workspace:*",
-    "tsconfig-paths": "^4.2.0"
+    "nodemailer": "^7.0.13",
+    "pug": "^3.0.3",
+    "tsconfig-paths": "^4.2.0",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/nodemailer": "^6.4.17",
+    "@types/pug": "^2.0.10"
   }
 }

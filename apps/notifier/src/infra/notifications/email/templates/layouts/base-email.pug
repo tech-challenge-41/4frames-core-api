@@ -1,0 +1,27 @@
+doctype html
+html(lang="pt-BR")
+  head
+    meta(charset="UTF-8")
+    meta(name="viewport" content="width=device-width, initial-scale=1.0")
+    title #{subject}
+  body(style="margin: 0; padding: 0; background-color: #f4f4f5; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;")
+    table(role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f4f4f5; padding: 40px 0;")
+      tr
+        td(align="center")
+          table(role="presentation" width="600" cellspacing="0" cellpadding="0" style="background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08);")
+            tr
+              td(style=`background-color: ${color}; padding: 32px 40px; text-align: center;`)
+                h1(style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 700;") #{heading}
+            tr
+              td(style="padding: 40px;")
+                p(style="margin: 0 0 16px; color: #374151; font-size: 16px; line-height: 1.6;")
+                  | Olá,
+                  strong  #{recipientName}
+                  | !
+                block emailBody
+            tr
+              td(style="background-color: #f9fafb; padding: 24px 40px; border-top: 1px solid #e5e7eb;")
+                p(style="margin: 0; color: #9ca3af; font-size: 13px; text-align: center; line-height: 1.5;")
+                  | Este é um e-mail automático enviado pelo 4Frames.
+                  br
+                  | Por favor, não responda a este e-mail.

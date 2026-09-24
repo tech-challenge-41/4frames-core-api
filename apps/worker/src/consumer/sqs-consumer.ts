@@ -19,6 +19,11 @@ export interface SqsConsumerOptions {
   logger: Logger;
   /** Pedido em cada ReceiveMessage e renovado na metade do tempo enquanto o handler roda. */
   visibilityTimeoutSeconds: number;
+  /**
+   * Quantos handlers rodam em paralelo no event loop (Promises). Cada um mantém seu heartbeat SQS.
+   * Limite de 10 por chamada ReceiveMessage (máximo da API).
+   */
+  maxParallelJobs?: number;
   waitTimeSeconds?: number;
   /** Atraso até a mensagem voltar a ficar visível depois de uma falha transiente. */
   transientRetryDelaySeconds?: number;
@@ -32,11 +37,11 @@ export interface SqsConsumerOptions {
 }
 
 /**
- * Laço de consumo de uma fila SQS, uma mensagem por vez:
- * - long polling (`WaitTimeSeconds`), `MaxNumberOfMessages=1`: um vídeo por worker, e o KEDA escala réplicas;
- * - heartbeat com `ChangeMessageVisibility` enquanto o handler roda, para a mensagem não reaparecer;
+ * Laço de consumo de uma fila SQS com paralelismo configurável (async no Node, sem threads):
+ * - long polling (`WaitTimeSeconds`), até `maxParallelJobs` mensagens em processamento;
+ * - heartbeat com `ChangeMessageVisibility` por mensagem em andamento;
  * - `delete` apaga; `retry` e erro transiente devolvem a mensagem à fila com atraso (após 3 recebimentos, DLQ);
- * - `stop()` interrompe o long polling, espera a mensagem atual terminar e resolve (SIGTERM do scale-down).
+ * - `stop()` interrompe o long polling, espera todos os jobs em andamento e resolve (SIGTERM do scale-down).
  */
 export class SqsConsumer {
   private readonly sqs: Pick<SQSClient, 'send'>;
@@ -44,6 +49,7 @@ export class SqsConsumer {
   private readonly handler: MessageHandler;
   private readonly logger: Logger;
   private readonly visibilityTimeoutSeconds: number;
+  private readonly maxParallelJobs: number;
   private readonly waitTimeSeconds: number;
   private readonly transientRetryDelaySeconds: number;
   private readonly receiveErrorBackoffMs: number;
@@ -57,6 +63,8 @@ export class SqsConsumer {
   private pollAbort?: AbortController;
   private wakeUp?: () => void;
   private lastAliveAt: number;
+  private inFlight = 0;
+  private readonly inFlightTasks = new Set<Promise<void>>();
 
   constructor(options: SqsConsumerOptions) {
     this.sqs = options.sqs;
@@ -64,6 +72,7 @@ export class SqsConsumer {
     this.handler = options.handler;
     this.logger = options.logger.child({ consumer: options.name });
     this.visibilityTimeoutSeconds = options.visibilityTimeoutSeconds;
+    this.maxParallelJobs = options.maxParallelJobs ?? 1;
     this.waitTimeSeconds = options.waitTimeSeconds ?? 20;
     this.transientRetryDelaySeconds = options.transientRetryDelaySeconds ?? 60;
     this.receiveErrorBackoffMs = options.receiveErrorBackoffMs ?? 5000;
@@ -80,14 +89,16 @@ export class SqsConsumer {
     return this.loop;
   }
 
-  /** Para de receber, espera a mensagem em andamento terminar e resolve. */
+  /** Para de receber, espera os jobs em andamento terminarem e resolve. */
   public async stop(): Promise<void> {
     if (!this.loop) {
       return;
     }
 
     if (!this.stopping) {
-      this.logger.info('Stopping consumer, waiting for the current message to finish');
+      this.logger.info('Stopping consumer, waiting for in-flight messages to finish', {
+        inFlight: this.inFlight
+      });
     }
 
     this.stopping = true;
@@ -99,7 +110,7 @@ export class SqsConsumer {
 
   /**
    * Laço rodando e com sinal recente (última volta do long polling ou job em andamento).
-   * Continua true durante o encerramento, enquanto o job atual termina: a probe não pode matar o pod no meio dele.
+   * Continua true durante o encerramento, enquanto jobs atuais terminam: a probe não pode matar o pod no meio deles.
    */
   public isAlive(): boolean {
     return this.loop !== undefined && !this.finished && this.now() - this.lastAliveAt <= this.maxSilenceMs;
@@ -109,35 +120,68 @@ export class SqsConsumer {
     this.lastAliveAt = this.now();
   }
 
+  private trackInFlight(task: Promise<void>): void {
+    this.inFlight += 1;
+    this.inFlightTasks.add(task);
+
+    void task.finally(() => {
+      this.inFlight -= 1;
+      this.inFlightTasks.delete(task);
+      this.markAlive();
+    });
+  }
+
+  private async waitForCapacity(): Promise<void> {
+    if (this.inFlightTasks.size === 0) {
+      return;
+    }
+
+    await Promise.race(this.inFlightTasks);
+  }
+
   private async run(): Promise<void> {
-    this.logger.info('Consumer started', { queueUrl: this.queueUrl });
+    this.logger.info('Consumer started', { queueUrl: this.queueUrl, maxParallelJobs: this.maxParallelJobs });
 
     try {
       while (!this.stopping) {
         this.markAlive();
-        const messages = await this.receive();
 
-        for (const message of messages) {
-          if (this.stopping) {
-            // Recebida durante o encerramento: devolve na hora para outra réplica.
-            await this.changeVisibility(message, 0);
-            continue;
+        while (!this.stopping && this.inFlight < this.maxParallelJobs) {
+          const slots = this.maxParallelJobs - this.inFlight;
+          const messages = await this.receive(Math.min(slots, 10));
+
+          if (messages.length === 0) break;
+
+          for (const message of messages) {
+            if (this.stopping) {
+              await this.changeVisibility(message, 0);
+              continue;
+            }
+
+            if (this.inFlight >= this.maxParallelJobs) {
+              break;
+            }
+
+            this.trackInFlight(this.processMessage(message));
           }
+        }
 
-          await this.processMessage(message);
+        if (!this.stopping && this.inFlight >= this.maxParallelJobs) {
+          await this.waitForCapacity();
         }
       }
     } catch (error) {
       this.logger.error('Consumer loop crashed', toError(error));
       throw error;
     } finally {
+      await Promise.all(this.inFlightTasks);
       this.finished = true;
     }
 
     this.logger.info('Consumer stopped');
   }
 
-  private async receive(): Promise<Message[]> {
+  private async receive(maxMessages: number): Promise<Message[]> {
     const abort = new AbortController();
     this.pollAbort = abort;
 
@@ -145,7 +189,7 @@ export class SqsConsumer {
       const output = await this.sqs.send(
         new ReceiveMessageCommand({
           QueueUrl: this.queueUrl,
-          MaxNumberOfMessages: 1,
+          MaxNumberOfMessages: Math.max(1, Math.min(maxMessages, 10)),
           WaitTimeSeconds: this.waitTimeSeconds,
           VisibilityTimeout: this.visibilityTimeoutSeconds,
           MessageSystemAttributeNames: ['ApproximateReceiveCount']
