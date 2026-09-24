@@ -59,13 +59,32 @@ export class PrismaVideoJobNotifierRepository {
       }));
   }
 
-  /** Só atualiza se ainda não foi notificado (idempotência). */
-  public async markNotified(jobId: string): Promise<boolean> {
+  /**
+   * Reserva o job para notificação: grava `notified_at` numa escrita condicional a
+   * `notified_at IS NULL` e status terminal. Devolve `true` só para quem ganhou a corrida — com
+   * mais de uma réplica, ou com o evento do Redis e a varredura caindo no mesmo job ao mesmo
+   * tempo, as outras recebem `false` e não enviam nada.
+   *
+   * O claim vem ANTES do envio de propósito: marcar depois deixa uma janela entre enviar e marcar
+   * em que dois processos mandam o mesmo e-mail (era o que acontecia com o `markNotified`).
+   */
+  public async claimForNotify(jobId: string): Promise<boolean> {
     const result = await prisma.video_jobs.updateMany({
-      where: { id: jobId, notified_at: null },
+      where: { id: jobId, notified_at: null, status: { in: ['DONE', 'FAILED'] } },
       data: { notified_at: new Date() }
     });
 
-    return result.count > 0;
+    return result.count === 1;
+  }
+
+  /**
+   * Devolve o job à fila de notificação quando o envio falhou depois do claim, para a varredura
+   * periódica tentar de novo. Só quem acabou de ganhar o claim chama isso.
+   */
+  public async releaseClaim(jobId: string): Promise<void> {
+    await prisma.video_jobs.updateMany({
+      where: { id: jobId },
+      data: { notified_at: null }
+    });
   }
 }
