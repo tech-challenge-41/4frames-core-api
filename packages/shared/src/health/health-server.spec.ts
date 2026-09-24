@@ -1,5 +1,12 @@
+import { type Logger } from '../logger';
 import { HealthServer } from './health-server';
-import { createFakeLogger } from '../__tests__/fakes';
+
+function createFakeLogger(): jest.Mocked<Logger> {
+  const logger = { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn(), child: jest.fn() };
+  logger.child.mockReturnValue(logger);
+
+  return logger;
+}
 
 describe('HealthServer', () => {
   let alive: boolean;
@@ -17,7 +24,7 @@ describe('HealthServer', () => {
     await server.stop();
   });
 
-  it('should answer 200 on /healthz while the consumer loop is alive', async () => {
+  it('should answer 200 on /healthz while the app reports itself alive', async () => {
     const response = await fetch(`${baseUrl}/healthz`);
 
     expect(response.status).toBe(200);
@@ -25,7 +32,7 @@ describe('HealthServer', () => {
     await expect(response.json()).resolves.toEqual({ status: 'ok' });
   });
 
-  it('should answer 503 when the consumer loop is stopped or stuck', async () => {
+  it('should answer 503 when the app reports itself unavailable', async () => {
     alive = false;
 
     const response = await fetch(`${baseUrl}/healthz?probe=liveness`);

@@ -1,6 +1,7 @@
 # Ambiente local do 4Frames (ver README.md).
 #
 #   Tudo no Docker:          docker compose up -d --build
+#   (api, worker, notifier, migrate + postgres, redis, mailpit, localstack)
 #   Apps no host (pnpm dev): docker compose up -d postgres redis mailpit localstack
 #
 # O .env da raiz usa endereços do host (localhost), que servem para os apps rodando com pnpm.
@@ -28,6 +29,9 @@ x-container-endpoints: &container-endpoints
   SQS_QUEUE_URL: http://localstack:4566/000000000000/4frames-video-uploads
   SQS_DLQ_URL: http://localstack:4566/000000000000/4frames-video-uploads-dlq
   REDIS_URL: redis://redis:6379
+  # O notifier usa o Mailpit deste Compose (ADR-002 §2.1): o .env aponta para localhost:1025, que
+  # dentro do container é o serviço `mailpit`. Para usar um provedor SMTP externo no Compose,
+  # comente estas duas linhas — aí valem SMTP_HOST/SMTP_PORT do .env.
   SMTP_HOST: mailpit
   SMTP_PORT: '1025'
 
@@ -92,6 +96,8 @@ services:
     environment:
       <<: *container-endpoints
       WORKER_TMP_DIR: /tmp/4frames
+      # Vários jobs em paralelo no mesmo container (além de `docker compose up --scale worker=N`).
+      WORKER_MAX_PARALLEL_JOBS: ${WORKER_MAX_PARALLEL_JOBS:-${WORKER_CONCURRENCY:-2}}
       # O migrate já gerou o Prisma Client e compilou o shared; api e worker sobem juntos.
       SKIP_SHARED_BUILD: '1'
     # Cobre um job inteiro depois do SIGTERM (WORKER_SHUTDOWN_TIMEOUT_SECONDS fica abaixo disso).
@@ -105,6 +111,32 @@ services:
         condition: service_healthy
       localstack:
         condition: service_healthy
+
+  # Assina jobs.events no Redis e envia e-mail (SMTP do .env) em job.done / job.failed.
+  notifier:
+    build: *app-build
+    image: 4frames-core-api-dev
+    command: ['pnpm', '--filter', '@4frames/notifier', 'dev']
+    working_dir: /repo
+    volumes: *app-volumes
+    env_file: .env
+    environment:
+      <<: *container-endpoints
+      # migrate já gerou o Prisma Client e compilou o shared (mesmo padrão do worker).
+      SKIP_SHARED_BUILD: '1'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+      api:
+        condition: service_started
+      worker:
+        condition: service_started
 
   postgres:
     image: postgres:16-alpine
