@@ -9,8 +9,11 @@ resources:
   - secret.yaml
   - api-deployment.yaml
   - api-service.yaml
+  - api-hpa.yaml
   - worker-deployment.yaml
   - worker-service.yaml
+  - worker-triggerauthentication.yaml
+  - worker-scaledobject.yaml
   - notifier-deployment.yaml
 
 images:

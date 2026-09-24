@@ -31,4 +31,12 @@ data:
   WORKER_HEALTH_PORT: '9100'
   WORKER_SHUTDOWN_TIMEOUT_SECONDS: '570'
   FFMPEG_TIMEOUT_SECONDS: '1800'
+  # Um vídeo por réplica: quem escala é o KEDA, pela profundidade da fila (ADR-002).
+  WORKER_MAX_PARALLEL_JOBS: '1'
   JWT_EXPIRES_IN: '21600'
+  # Notifier: sem estas quatro o processo sai na partida (EnvValidationError). SMTP é o Mailpit (D11).
+  SMTP_HOST: mailpit
+  SMTP_PORT: '1025'
+  MAIL_FROM: 4Frames <no-reply@4frames.local>
+  # Link do job no e-mail: endereço do front pelo Ingress.
+  WEB_APP_URL: http://localhost:8080

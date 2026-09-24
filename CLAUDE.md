@@ -25,7 +25,8 @@ packages/
       health/     HealthServer: GET /healthz for the worker and notifier liveness probes
       generated/  Prisma Client output (gitignored, created by `pnpm db:generate`)
 infra/localstack/init/             LocalStack bootstrap scripts
-infra/k8s/                         Kustomize manifests (api, worker, notifier) + overlays local/ci
+infra/k8s/                         Kustomize: base (api + HPA, worker + KEDA, notifier), overlays local/ci, kind-config.yaml
+scripts/k8s-local.sh               local Kind cluster: Compose infra, images, KEDA, overlay local (up|down|logs|status)
 .github/workflows/                 ci.yml (test→lint→type-check→k8s→build) + cd.yml (release-* → GHCR + Kind smoke)
 docs/adr/                          architecture decisions: ADR-001 (PDF, AWS design) + ADR-002 (local run, monorepo, UUID)
 tsconfig.base.json                 compiler options shared by every package
@@ -386,14 +387,9 @@ ordered by `created_at desc`).
   never got reconciled with the ADR text; not a functional issue, just a doc
   mismatch to be aware of.
 
-**Infrastructure-level (per ADR-002, all "Previsto"/planned in that ADR, not
-started here):**
+**Infrastructure-level (per ADR-002):**
 
-- No local Kubernetes cluster, Ingress, HPA or KEDA — everything today runs via
-  `docker compose`, which ADR-002 explicitly calls the _development_ environment,
-  not the scaling mechanism. Parallel video processing is demonstrated locally with
-  `WORKER_MAX_PARALLEL_JOBS` and/or `docker compose up --scale worker=N`, not with KEDA yet.
-- No CI/CD: only `.github/PULL_REQUEST_TEMPLATE.md` exists, no GitHub Actions
-  workflow runs lint/test/build, publishes images to GHCR, or deploys to an
-  ephemeral cluster.
+- The local Kind cluster (`scripts/k8s-local.sh`) has HPA on the API and KEDA on the worker, but no
+  Ingress and no metrics-server yet: the API is exposed on NodePort 31000, and without metrics-server
+  the HPA only keeps its minimum replicas.
 - No Prometheus/Grafana; no metrics exported beyond what's in application logs.

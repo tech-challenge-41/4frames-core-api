@@ -1,0 +1,37 @@
+# Escala o worker pela profundidade da fila SQS (ADR-002): um vídeo por réplica (queueLength 1,
+# WORKER_MAX_PARALLEL_JOBS=1). Os endereços do base são os nomes de serviço; o overlay local troca.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: worker
+  namespace: 4frames
+  labels:
+    app.kubernetes.io/name: worker
+    app.kubernetes.io/part-of: 4frames
+spec:
+  scaleTargetRef:
+    name: worker
+  minReplicaCount: 1
+  maxReplicaCount: 5
+  cooldownPeriod: 60
+  pollingInterval: 5
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 30
+          policies:
+            - type: Percent
+              value: 100
+              periodSeconds: 15
+  triggers:
+    - type: aws-sqs-queue
+      authenticationRef:
+        name: localstack-aws
+      metadata:
+        queueURL: http://localstack:4566/000000000000/4frames-video-uploads
+        queueLength: '1'
+        awsRegion: us-east-1
+        awsEndpoint: http://localstack:4566
+        # O LocalStack não tem IMDS: as credenciais vêm do próprio operator (scripts/k8s-local.sh).
+        identityOwner: operator

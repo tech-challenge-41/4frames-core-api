@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: worker
     app.kubernetes.io/part-of: 4frames
 spec:
-  replicas: 1
+  # Sem replicas: quem decide é o KEDA (worker-scaledobject.yaml). Um valor aqui voltaria a cada apply.
   selector:
     matchLabels:
       app.kubernetes.io/name: worker

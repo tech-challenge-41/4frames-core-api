@@ -3,6 +3,7 @@ kind: Kustomization
 
 resources:
   - ../../base
+  - redis.yaml
 
 # O workflow de CD sobrescreve newName/newTag com `kustomize edit set image`
 # para as imagens acabadas de construir (carregadas no Kind via kind load).
