@@ -36,5 +36,7 @@ ENV NODE_ENV=production
 COPY --from=build --chown=node:node /out ./
 
 USER node
+# /healthz para a liveness probe (NOTIFIER_HEALTH_PORT, padrão 9100; e /metrics no Card 10)
+EXPOSE 9100
 
 CMD ["node", "dist/main.js"]

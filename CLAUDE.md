@@ -327,6 +327,8 @@ storage/ zip/ repo/ progress/ S3 (lib-storage), archiver, Prisma, Redis publishe
 - The `notifier` service uses the same dev image/entrypoint as `api`, `pnpm --filter @4frames/notifier dev`,
   `SKIP_SHARED_BUILD=1`, SMTP pointed at the Compose `mailpit`, starts with `docker compose up` alongside api/worker.
 - `apps/worker/Dockerfile` (production) installs `ffmpeg`, runs `node dist/main.js` as `node` and exposes 9100.
+- `apps/notifier/Dockerfile` (production) runs `node dist/main.js` as `node` and exposes 9100 (`/healthz`, used by
+  the `httpGet` probes in `infra/k8s/base/notifier-deployment.yaml`).
 
 ## Commands (run at the repo root)
 
