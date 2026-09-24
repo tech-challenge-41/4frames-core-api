@@ -77,7 +77,7 @@ pnpm dev:api
 | LocalStack | http://localhost:4566                                                              | S3 e SQS                                     |
 | Redis      | localhost:6379                                                                     | Progresso e eventos de job                   |
 | Mailpit    | SMTP em localhost:1025 (`mailpit:1025` no Compose), caixa em http://localhost:8025 | E-mails de desenvolvimento (substitui o SES) |
-| Notifier   | (sem porta HTTP; logs via `docker compose logs -f notifier`)                       | E-mail ao terminar/falhar job                |
+| Notifier   | `GET /healthz` na porta 9100; logs via `docker compose logs -f notifier`           | E-mail ao terminar/falhar job                |
 
 ### Comandos (na raiz)
 

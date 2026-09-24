@@ -1,5 +1,6 @@
 import '@4frames/shared/env/load';
 
+import { HealthServer } from '@4frames/shared/health';
 import { createLogger } from '@4frames/shared/logger';
 import { prisma } from '@4frames/shared/prisma';
 import { registerGracefulShutdown } from '@4frames/shared/process';
@@ -48,17 +49,27 @@ async function bootstrap(): Promise<void> {
     batchSize: env.NOTIFIER_RECOVERY_BATCH_SIZE
   });
 
+  const healthServer = new HealthServer({
+    port: env.NOTIFIER_HEALTH_PORT,
+    isAlive: () => subscriber.isAlive(),
+    logger
+  });
+
   registerGracefulShutdown({
     logger,
     onShutdown: async () => {
       recovery.stop();
       await subscriber.stop();
+      await healthServer.stop();
       await prisma.$disconnect();
     }
   });
 
   recovery.start();
   await subscriber.start();
+  // Depois da assinatura, como no worker: enquanto o notifier não conseguiu assinar, ele não tem o
+  // que reportar, e a probe falhando por conexão recusada é a resposta certa.
+  await healthServer.start();
 
   const smtpInboxHint =
     env.SMTP_HOST === 'mailpit' || env.SMTP_HOST === 'localhost'
@@ -71,6 +82,7 @@ async function bootstrap(): Promise<void> {
     smtpHost: env.SMTP_HOST,
     smtpPort: env.SMTP_PORT,
     smtpInboxHint,
+    healthPort: env.NOTIFIER_HEALTH_PORT,
     recoveryIntervalSeconds: env.NOTIFIER_RECOVERY_INTERVAL_SECONDS
   });
 }

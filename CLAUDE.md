@@ -9,7 +9,7 @@ and a shared package. Read this before adding or changing any endpoint or packag
 apps/
   api/          @4frames/api       Express 5 REST API (hexagonal, see "Layers" below)
   worker/       @4frames/worker    SQS consumer + ffmpeg: frames, zip, job status and progress (see "Worker" below)
-  notifier/     @4frames/notifier  Redis `jobs.events` subscriber, SMTP e-mail (Pug templates), recovery sweep
+  notifier/     @4frames/notifier  Redis `jobs.events` subscriber, SMTP e-mail (Pug templates), recovery sweep, /healthz
 packages/
   shared/       @4frames/shared    code and contracts used by more than one app
     prisma/                        schema.prisma, models/*.prisma, migrations/, seeds/
@@ -22,6 +22,7 @@ packages/
       aws/        createS3Client, createSqsClient
       redis/      createRedisClient (lazyConnect)
       process/    registerGracefulShutdown
+      health/     HealthServer: GET /healthz for the worker and notifier liveness probes
       generated/  Prisma Client output (gitignored, created by `pnpm db:generate`)
 infra/localstack/init/             LocalStack bootstrap scripts
 docs/adr/                          architecture decisions: ADR-001 (PDF, AWS design) + ADR-002 (local run, monorepo, UUID)
@@ -36,8 +37,8 @@ docker-compose.yml, .env           one Compose file and one .env at the root
   between apps (S3 keys, Redis channels, event payloads, statuses). App-specific code stays in
   the app. No Express, HTTP or request-scoped code in `shared`.
 - Import through subpaths, never deep paths: `@4frames/shared/prisma`, `/env`, `/logger`,
-  `/jobs`, `/aws`, `/redis`, `/process`. The root `@4frames/shared` only re-exports the light
-  modules (env, jobs, logger, process). Prisma, AWS and Redis stay behind subpaths so importing
+  `/jobs`, `/aws`, `/redis`, `/process`, `/health`. The root `@4frames/shared` only re-exports the
+  light modules (env, jobs, logger, process, health). Prisma, AWS and Redis stay behind subpaths so importing
   a contract never opens a database connection or loads an SDK.
 - Apps resolve `@4frames/shared` at runtime and in `tsc` through the package `exports`, which
   point to `dist`. After changing `shared`, run `pnpm --filter @4frames/shared build` (or keep
@@ -283,7 +284,8 @@ consumer/video-upload-handler.ts  S3 event → use case (ignores s3:TestEvent, d
 consumer/dlq-handler.ts       dead-lettered message → FAILED "Falha após 3 tentativas" + job.failed
 processing/                   use case, ports, InvalidVideoError + FAILURE_REASONS, source key parsing
 ffmpeg/                       run-process (spawn), ffprobe validation, frame extraction with -progress
-storage/ zip/ repo/ progress/ health/   S3 (lib-storage), archiver, Prisma, Redis publisher, /healthz
+storage/ zip/ repo/ progress/ S3 (lib-storage), archiver, Prisma, Redis publisher
+                              (/healthz comes from @4frames/shared/health)
 ```
 
 - Error classification is the core rule. `InvalidVideoError` (the video's fault) → `FAILED` with a Portuguese,

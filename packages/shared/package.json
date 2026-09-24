@@ -22,6 +22,10 @@
       "types": "./dist/env/load.d.ts",
       "default": "./dist/env/load.js"
     },
+    "./health": {
+      "types": "./dist/health/index.d.ts",
+      "default": "./dist/health/index.js"
+    },
     "./jobs": {
       "types": "./dist/jobs/index.d.ts",
       "default": "./dist/jobs/index.js"
