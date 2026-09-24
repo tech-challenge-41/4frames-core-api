@@ -25,6 +25,8 @@ packages/
       health/     HealthServer: GET /healthz for the worker and notifier liveness probes
       generated/  Prisma Client output (gitignored, created by `pnpm db:generate`)
 infra/localstack/init/             LocalStack bootstrap scripts
+infra/k8s/                         Kustomize manifests (api, worker, notifier) + overlays local/ci
+.github/workflows/                 ci.yml (test→lint→type-check→k8s→build) + cd.yml (release-* → GHCR + Kind smoke)
 docs/adr/                          architecture decisions: ADR-001 (PDF, AWS design) + ADR-002 (local run, monorepo, UUID)
 tsconfig.base.json                 compiler options shared by every package
 eslint.config.js, .prettierrc.js   one lint config for the whole repo
@@ -325,6 +327,8 @@ storage/ zip/ repo/ progress/ S3 (lib-storage), archiver, Prisma, Redis publishe
 - The `notifier` service uses the same dev image/entrypoint as `api`, `pnpm --filter @4frames/notifier dev`,
   `SKIP_SHARED_BUILD=1`, SMTP pointed at the Compose `mailpit`, starts with `docker compose up` alongside api/worker.
 - `apps/worker/Dockerfile` (production) installs `ffmpeg`, runs `node dist/main.js` as `node` and exposes 9100.
+- `apps/notifier/Dockerfile` (production) runs `node dist/main.js` as `node` and exposes 9100 (`/healthz`, used by
+  the `httpGet` probes in `infra/k8s/base/notifier-deployment.yaml`).
 
 ## Commands (run at the repo root)
 

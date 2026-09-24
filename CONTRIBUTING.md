@@ -9,7 +9,7 @@ O front fica em [`4frames-web-app`](https://github.com/tech-challenge-41/4frames
 1. Todo trabalho sai de `develop` em uma branch própria e volta para `develop` por pull request.
 2. Ninguém commita direto em `develop` ou `main`.
 3. Todo PR precisa da aprovação de outra pessoa, e quem mescla não é o autor.
-4. Lint, type-check e testes passam antes de pedir revisão.
+4. Lint, type-check e testes passam (CI verde) antes de pedir revisão.
 5. Commits seguem Conventional Commits e são sempre feitos por uma pessoa, nunca por IA.
 6. `.env`, tokens e senhas reais nunca entram no git.
 
@@ -173,7 +173,7 @@ Quando se aplicar:
 
 ### Merge
 
-- Só com aprovação, sem conflitos e com CI verde. Enquanto o workflow de CI não existir, quem revisa confirma que os comandos de "Antes de abrir" passam.
+- Só com aprovação, sem conflitos e com CI verde (workflow `.github/workflows/ci.yml`: test → lint → type-check → validate-k8s → build-images). O plano GitHub Free do repositório privado não oferece branch protection: a disciplina é do grupo, não do GitHub.
 - Quem mescla é quem aprovou, nunca o autor.
 - Use **Create a merge commit**, que preserva os commits feitos à mão. Não use _squash_ nem _rebase and merge_.
 - Apague a branch depois do merge.
