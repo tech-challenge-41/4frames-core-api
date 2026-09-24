@@ -1,0 +1,55 @@
+# Um vídeo por réplica (ADR-002). O KEDA sobe/desce réplicas pela profundidade da fila SQS.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: 4frames-worker
+  namespace: default
+  labels:
+    app: 4frames-worker
+spec:
+  progressDeadlineSeconds: 900
+  replicas: 0
+  selector:
+    matchLabels:
+      app: 4frames-worker
+  template:
+    metadata:
+      labels:
+        app: 4frames-worker
+    spec:
+      terminationGracePeriodSeconds: 600
+      containers:
+        - name: 4frames-worker
+          image: WORKER_IMAGE_PLACEHOLDER
+          imagePullPolicy: Always
+          ports:
+            - name: health
+              containerPort: 9100
+          envFrom:
+            - secretRef:
+                name: 4frames-db-secret
+            - secretRef:
+                name: 4frames-aws-secret
+            - configMapRef:
+                name: 4frames-config
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp/4frames
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9100
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            failureThreshold: 3
+            timeoutSeconds: 5
+          resources:
+            requests:
+              memory: '512Mi'
+              cpu: '250m'
+            limits:
+              memory: '2Gi'
+              cpu: '2'
+      volumes:
+        - name: tmp
+          emptyDir: {}

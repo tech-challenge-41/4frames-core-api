@@ -22,6 +22,7 @@ que mudou em relação ao ADR-001.
 | `apps/notifier`   | `@4frames/notifier` | Assina `jobs.events`, envia e-mail (Pug + SMTP/Mailpit) e recupera jobs sem `notified_at`        |
 | `packages/shared` | `@4frames/shared`   | Prisma (schema, migrations, seeds e client), env, logger, contratos de job, clientes AWS e Redis |
 | `infra/`          | –                   | Scripts de init do LocalStack                                                                    |
+| `k8s/`            | –                   | Manifestos da API/worker (padrão garagio-api; ver [k8s/README.md](./k8s/README.md))              |
 
 A API segue arquitetura hexagonal em `apps/api/src`: `domain` (ports e erros), `application`
 (use cases e DTOs), `infra` (HTTP, serviços, logging) e `dependencies` (container de DI).
@@ -29,7 +30,8 @@ A API segue arquitetura hexagonal em `apps/api/src`: `domain` (ports e erros), `
 ## Pré-requisitos
 
 - Node.js 24 (ver `.nvmrc`) e pnpm 10
-- Docker Desktop
+- Docker
+- Para o modo Kubernetes local: [kind](https://kind.sigs.k8s.io/), `kubectl` e `envsubst` (pacote `gettext`)
 
 ## Desenvolvimento
 
@@ -68,16 +70,67 @@ pnpm dev:api
 - Não rode a API nos dois modos ao mesmo tempo: os dois usam a porta 3000. Para trocar, use
   `docker compose stop api`.
 
+### Kubernetes (kind) — demo de escala
+
+Mesmo padrão do `garagio-api`: YAML em [`k8s/`](./k8s/), `kind-config.yaml` na raiz e
+[`scripts/k8s-local.sh`](./scripts/k8s-local.sh). A infra (Postgres, Redis, LocalStack, Mailpit)
+fica no **Compose**; API e worker rodam no cluster. O KEDA escala o worker pela profundidade da
+fila SQS (um vídeo por réplica). Detalhes em [k8s/README.md](./k8s/README.md).
+
+**Subir**
+
+```bash
+cp .env.example .env          # se ainda não tiver
+# No Compose, o notifier usa SMTP_HOST=mailpit (container). No host use localhost.
+./scripts/k8s-local.sh up
+```
+
+O script: sobe a infra no Compose → migrate/seed → cria o cluster kind → build + `kind load` das
+imagens → aplica os manifestos → instala o KEDA e configura credenciais LocalStack no operator.
+
+**Não** deixe `api`/`worker` do Compose rodando ao mesmo tempo (disputam a mesma fila). Pare-os se
+estiverem no ar: `docker compose stop api worker notifier`.
+
+**Testar**
+
+| O quê        | Como                                                                 |
+| ------------ | -------------------------------------------------------------------- |
+| API          | http://localhost:31000/health-check e http://localhost:31000/api-docs |
+| Login        | `POST /auth` com `admin@admin.com` / `123456` (seed)                 |
+| Front        | No `4frames-web-app`: `VITE_API_URL=http://localhost:31000` e `pnpm dev` → http://localhost:5173 |
+| Fluxo multi  | Converter vários vídeos → Meus vídeos → status / download            |
+| Escala KEDA  | `kubectl get pods -l app=4frames-worker -w` enquanto enfileira jobs  |
+| Status/logs  | `./scripts/k8s-local.sh status` / `./scripts/k8s-local.sh logs`      |
+
+```bash
+# smoke rápido
+curl -s http://localhost:31000/health-check
+curl -s -X POST http://localhost:31000/auth \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"admin@admin.com","password":"123456"}'
+```
+
+**Desligar**
+
+```bash
+./scripts/k8s-local.sh down   # apaga o cluster kind
+docker compose stop           # opcional: para a infra no Compose
+```
+
+Disco: build + `kind load` ocupam bastante espaço. Se o `kind load` falhar com *no space left*,
+rode `docker system prune -af` (cuidado: remove imagens não usadas) e tente de novo.
+
 ### Serviços locais
 
 | Serviço    | Endereço                                                                              | Para quê                                                    |
 | ---------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| API        | http://localhost:3000 (`/api-docs`)                                                   | REST                                                        |
+| API (Compose / `pnpm`) | http://localhost:3000 (`/api-docs`)                                         | REST                                                        |
+| API (kind) | http://localhost:31000 (`/api-docs`)                                                  | REST no cluster local                                       |
 | PostgreSQL | localhost:5432                                                                        | Banco                                                       |
 | LocalStack | http://localhost:4566                                                                 | S3 e SQS                                                    |
 | Redis      | localhost:6379                                                                        | Progresso e eventos de job                                  |
 | Mailpit    | SMTP em localhost:1025 (ou `mailpit:1025` no Compose), caixa em http://localhost:8025 | Opcional; use se `SMTP_HOST` no `.env` apontar para Mailpit |
-| Notifier   | (sem porta HTTP; logs via `docker compose logs -f notifier`)                          | E-mail ao terminar/falhar job                               |
+| Notifier   | (sem porta HTTP; logs via `docker compose logs -f notifier`)                          | E-mail ao terminar/falhar job (Compose; não está no kind)   |
 
 ### Comandos (na raiz)
 

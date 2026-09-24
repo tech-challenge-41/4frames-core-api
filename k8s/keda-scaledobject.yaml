@@ -1,0 +1,25 @@
+# Escala 4frames-worker pela profundidade da fila SQS no LocalStack (ADR-002).
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: 4frames-worker
+  namespace: default
+  labels:
+    app: 4frames-worker
+spec:
+  scaleTargetRef:
+    name: 4frames-worker
+  minReplicaCount: 1
+  maxReplicaCount: 5
+  cooldownPeriod: 60
+  pollingInterval: 5
+  triggers:
+    - type: aws-sqs-queue
+      authenticationRef:
+        name: localstack-aws
+      metadata:
+        queueURL: '${SQS_QUEUE_URL}'
+        queueLength: '1'
+        awsRegion: '${AWS_REGION}'
+        awsEndpoint: '${AWS_ENDPOINT_URL}'
+        identityOwner: operator
