@@ -13,7 +13,8 @@ const config: Config = {
   clearMocks: true,
   coverageDirectory: 'coverage',
   collectCoverageFrom: ['src/**/*.ts', '!src/**/*.spec.ts', '!src/**/__tests__/**', '!src/main.ts'],
-  testPathIgnorePatterns: ['/node_modules/', '/dist/']
+  testPathIgnorePatterns: ['/node_modules/', '/dist/'],
+  coveragePathIgnorePatterns: ['src/infra/notifications/email/templates/.*\\.pug']
 };
 
 export default config;

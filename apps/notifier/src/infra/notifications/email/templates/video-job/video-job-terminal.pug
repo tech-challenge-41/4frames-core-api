@@ -1,0 +1,18 @@
+extends ../layouts/base-email.pug
+
+block emailBody
+  p(style="margin: 0 0 24px; color: #374151; font-size: 16px; line-height: 1.6;") #{message}
+  table(role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f9fafb; border-radius: 6px; padding: 16px; margin-bottom: 24px;")
+    tr
+      td(style="padding: 16px;")
+        p(style="margin: 0 0 4px; color: #6b7280; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;") Vídeo
+        p(style="margin: 0; color: #111827; font-size: 16px; font-weight: 600;") #{fileName}
+      td(style="padding: 16px; text-align: right;")
+        p(style="margin: 0 0 4px; color: #6b7280; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;") Job
+        p(style="margin: 0; color: #111827; font-size: 13px; font-family: monospace;") #{jobId}
+  if detailText
+    p(style="margin: 0 0 24px; color: #374151; font-size: 15px; line-height: 1.6; background: #f9fafb; padding: 16px; border-radius: 6px;") #{detailText}
+  table(role="presentation" cellspacing="0" cellpadding="0")
+    tr
+      td(style="border-radius: 6px; background-color: #166534;")
+        a(href=jobUrl style="display: inline-block; padding: 14px 28px; color: #ffffff; font-size: 16px; font-weight: 600; text-decoration: none;") Abrir no 4Frames

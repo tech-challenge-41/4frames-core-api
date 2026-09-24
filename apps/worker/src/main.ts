@@ -3,20 +3,19 @@ import '@4frames/shared/env/load';
 import fs from 'node:fs/promises';
 
 import { createS3Client, createSqsClient } from '@4frames/shared/aws';
-import { parseEnv } from '@4frames/shared/env';
+import { HealthServer } from '@4frames/shared/health';
 import { createLogger, type Logger } from '@4frames/shared/logger';
 import { prisma } from '@4frames/shared/prisma';
 import { registerGracefulShutdown } from '@4frames/shared/process';
 import { createRedisClient } from '@4frames/shared/redis';
 
-import { workerEnvSchema } from './config/worker-env';
+import { parseWorkerEnv } from './config/worker-env';
 import { createDlqHandler } from './consumer/dlq-handler';
 import { SqsConsumer } from './consumer/sqs-consumer';
 import { createVideoUploadHandler } from './consumer/video-upload-handler';
 import { FfmpegFrameExtractor } from './ffmpeg/extract-frames';
 import { FfprobeVideoProbe } from './ffmpeg/ffprobe';
 import { runProcess } from './ffmpeg/run-process';
-import { HealthServer } from './health/health-server';
 import { toError } from './processing/errors';
 import { ProcessVideoJobUseCase } from './processing/process-video-job.usecase';
 import { RedisJobEventPublisher } from './progress/redis-progress-publisher';
@@ -44,7 +43,7 @@ async function assertBinariesAvailable(logger: Logger): Promise<void> {
 }
 
 async function bootstrap(): Promise<void> {
-  const env = parseEnv(workerEnvSchema);
+  const env = parseWorkerEnv();
   const logger = createLogger({ base: { service: SERVICE_NAME } });
 
   await assertBinariesAvailable(logger);
@@ -75,14 +74,16 @@ async function bootstrap(): Promise<void> {
     tmpDir: env.WORKER_TMP_DIR
   });
 
+  const uploadHandler = createVideoUploadHandler({ processVideoJob, bucket: env.S3_BUCKET_NAME, logger });
   const consumers = [
     new SqsConsumer({
       name: 'uploads',
       sqs,
       queueUrl: env.SQS_QUEUE_URL,
-      handler: createVideoUploadHandler({ processVideoJob, bucket: env.S3_BUCKET_NAME, logger }),
+      handler: uploadHandler,
       logger,
-      visibilityTimeoutSeconds: env.VISIBILITY_TIMEOUT_SECONDS
+      visibilityTimeoutSeconds: env.VISIBILITY_TIMEOUT_SECONDS,
+      maxParallelJobs: env.WORKER_MAX_PARALLEL_JOBS
     })
   ];
 
@@ -129,6 +130,7 @@ async function bootstrap(): Promise<void> {
 
   logger.info('Worker started', {
     nodeEnv: env.NODE_ENV,
+    maxParallelJobs: env.WORKER_MAX_PARALLEL_JOBS,
     frameFps: env.FRAME_FPS,
     frameFormat: env.FRAME_FORMAT,
     maxVideoDurationSeconds: env.MAX_VIDEO_DURATION_SECONDS,
