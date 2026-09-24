@@ -163,7 +163,7 @@ show_validation() {
   cat <<MSG
 
 ╭──────────────────────────────────────────────────────────────╮
-│  Setup local pronto (padrão garagio-api + KEDA no worker)    │
+│  Setup local pronto                                          │
 ╰──────────────────────────────────────────────────────────────╯
 
   API:    http://localhost:31000/health-check
