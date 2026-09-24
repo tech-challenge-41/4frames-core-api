@@ -26,7 +26,7 @@ const config: Config = {
   ],
   // Gate de cobertura do CI (sem SonarCloud). Subir conforme a cobertura crescer.
   coverageThreshold: {
-    global: { statements: 70, branches: 55, functions: 70, lines: 70 }
+    global: { statements: 76, branches: 62, functions: 74, lines: 76 }
   }
 };
 
