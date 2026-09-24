@@ -2,14 +2,15 @@ apiVersion: keda.sh/v1alpha1
 kind: TriggerAuthentication
 metadata:
   name: localstack-aws
-  namespace: default
+  namespace: 4frames
   labels:
-    app: 4frames-worker
+    app.kubernetes.io/name: worker
+    app.kubernetes.io/part-of: 4frames
 spec:
   secretTargetRef:
     - parameter: awsAccessKeyID
-      name: 4frames-aws-secret
+      name: 4frames-secret
       key: AWS_ACCESS_KEY_ID
     - parameter: awsSecretAccessKey
-      name: 4frames-aws-secret
+      name: 4frames-secret
       key: AWS_SECRET_ACCESS_KEY

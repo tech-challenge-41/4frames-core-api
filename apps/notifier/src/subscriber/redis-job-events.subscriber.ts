@@ -43,6 +43,14 @@ export class RedisJobEventsSubscriber {
     this.logger.info('Subscribed to Redis channel', { channel: JOBS_EVENTS_CHANNEL });
   }
 
+  public isAlive(): boolean {
+    if (this.stopping) {
+      return true;
+    }
+
+    return this.client !== undefined && this.client.status !== 'end';
+  }
+
   public async stop(): Promise<void> {
     this.stopping = true;
 

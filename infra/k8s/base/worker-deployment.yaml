@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: 4frames
+  labels:
+    app.kubernetes.io/name: worker
+    app.kubernetes.io/part-of: 4frames
+spec:
+  # Sem replicas: quem decide é o KEDA (worker-scaledobject.yaml). Um valor aqui voltaria a cada apply.
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: worker
+        app.kubernetes.io/part-of: 4frames
+    spec:
+      # Cobre um job inteiro depois do SIGTERM (WORKER_SHUTDOWN_TIMEOUT_SECONDS fica abaixo disso).
+      terminationGracePeriodSeconds: 600
+      containers:
+        - name: worker
+          image: 4frames-worker:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: health
+              containerPort: 9100
+          envFrom:
+            - configMapRef:
+                name: 4frames-config
+            - secretRef:
+                name: 4frames-secret
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp/4frames
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: '2'
+              memory: 2Gi
+      volumes:
+        - name: tmp
+          emptyDir: {}

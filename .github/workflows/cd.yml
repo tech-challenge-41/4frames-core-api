@@ -1,0 +1,127 @@
+name: CD
+
+# Publica imagens versionadas no GHCR e prova o deploy num Kind efêmero.
+on:
+  push:
+    tags:
+      - 'release-*'
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  OWNER: ${{ github.repository_owner }}
+
+jobs:
+  publish-and-smoke:
+    name: publish-and-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Image tag from git tag
+        id: meta
+        run: echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build images
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          docker build -f apps/api/Dockerfile \
+            -t "4frames-api:${TAG}" \
+            -t "${{ env.REGISTRY }}/${{ env.OWNER }}/4frames-api:${TAG}" .
+          docker build -f apps/worker/Dockerfile \
+            -t "4frames-worker:${TAG}" \
+            -t "${{ env.REGISTRY }}/${{ env.OWNER }}/4frames-worker:${TAG}" .
+          docker build -f apps/notifier/Dockerfile \
+            -t "4frames-notifier:${TAG}" \
+            -t "${{ env.REGISTRY }}/${{ env.OWNER }}/4frames-notifier:${TAG}" .
+
+      - name: Push images to GHCR
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          docker push "${{ env.REGISTRY }}/${{ env.OWNER }}/4frames-api:${TAG}"
+          docker push "${{ env.REGISTRY }}/${{ env.OWNER }}/4frames-worker:${TAG}"
+          docker push "${{ env.REGISTRY }}/${{ env.OWNER }}/4frames-notifier:${TAG}"
+
+      - name: Create Kind cluster
+        uses: helm/kind-action@v1.14.0
+        with:
+          cluster_name: 4frames-cd
+          wait: 120s
+
+      - name: Load images into Kind
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          kind load docker-image "4frames-api:${TAG}" --name 4frames-cd
+          kind load docker-image "4frames-worker:${TAG}" --name 4frames-cd
+          kind load docker-image "4frames-notifier:${TAG}" --name 4frames-cd
+
+      - name: Point CI overlay at loaded images
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          # Mantém os mesmos manifests; só troca newTag.
+          sed -i "s/newTag: ci/newTag: ${TAG}/g" infra/k8s/overlays/ci/kustomization.yaml
+          kubectl kustomize infra/k8s/overlays/ci >/dev/null
+
+      # O base traz o ScaledObject do worker: sem os CRDs do KEDA o apply falha. Mesma versão do
+      # scripts/k8s-local.sh. O webhook valida o ScaledObject, por isso a espera antes do deploy.
+      - name: Install KEDA
+        env:
+          KEDA_VERSION: 2.16.1
+        run: |
+          kubectl apply --server-side -f "https://github.com/kedacore/keda/releases/download/v${KEDA_VERSION}/keda-${KEDA_VERSION}.yaml"
+          kubectl wait --for=condition=available --timeout=180s deployment/keda-operator -n keda
+          kubectl wait --for=condition=available --timeout=180s deployment/keda-metrics-apiserver -n keda
+          kubectl wait --for=condition=available --timeout=180s deployment/keda-admission -n keda
+
+      - name: Deploy to Kind
+        run: kubectl apply -k infra/k8s/overlays/ci
+
+      - name: Wait for rollouts
+        run: |
+          # Redis só existe no overlay ci: o notifier fica pronto quando assina jobs.events nele.
+          kubectl -n 4frames rollout status deploy/redis --timeout=120s
+          kubectl -n 4frames rollout status deploy/api --timeout=180s
+          kubectl -n 4frames rollout status deploy/worker --timeout=180s
+          kubectl -n 4frames rollout status deploy/notifier --timeout=180s
+
+      - name: Smoke tests
+        run: |
+          kubectl -n 4frames port-forward svc/api 3000:3000 &
+          API_PF=$!
+          kubectl -n 4frames port-forward svc/worker 9100:9100 &
+          WORKER_PF=$!
+          trap 'kill $API_PF $WORKER_PF 2>/dev/null || true' EXIT
+
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/health-check >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:3000/health-check | tee /tmp/api-health.json
+          grep -q 'Server is running' /tmp/api-health.json
+
+          for _ in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9100/healthz || true)
+            if [ "$code" = "200" ]; then
+              break
+            fi
+            sleep 2
+          done
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9100/healthz)
+          test "$code" = "200"
+
+          kubectl -n 4frames get deploy,pods,svc
+          phase=$(kubectl -n 4frames get pod -l app.kubernetes.io/name=notifier -o jsonpath='{.items[0].status.phase}')
+          test "$phase" = "Running"

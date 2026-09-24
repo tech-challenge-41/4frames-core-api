@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - redis.yaml
+
+# O workflow de CD sobrescreve newName/newTag com `kustomize edit set image`
+# para as imagens acabadas de construir (carregadas no Kind via kind load).
+images:
+  - name: 4frames-api
+    newName: 4frames-api
+    newTag: ci
+  - name: 4frames-worker
+    newName: 4frames-worker
+    newTag: ci
+  - name: 4frames-notifier
+    newName: 4frames-notifier
+    newTag: ci

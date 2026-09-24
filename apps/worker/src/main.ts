@@ -3,6 +3,7 @@ import '@4frames/shared/env/load';
 import fs from 'node:fs/promises';
 
 import { createS3Client, createSqsClient } from '@4frames/shared/aws';
+import { HealthServer } from '@4frames/shared/health';
 import { createLogger, type Logger } from '@4frames/shared/logger';
 import { prisma } from '@4frames/shared/prisma';
 import { registerGracefulShutdown } from '@4frames/shared/process';
@@ -15,7 +16,6 @@ import { createVideoUploadHandler } from './consumer/video-upload-handler';
 import { FfmpegFrameExtractor } from './ffmpeg/extract-frames';
 import { FfprobeVideoProbe } from './ffmpeg/ffprobe';
 import { runProcess } from './ffmpeg/run-process';
-import { HealthServer } from './health/health-server';
 import { toError } from './processing/errors';
 import { ProcessVideoJobUseCase } from './processing/process-video-job.usecase';
 import { RedisJobEventPublisher } from './progress/redis-progress-publisher';

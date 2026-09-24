@@ -8,7 +8,7 @@ export const notifierEnvSchema = runtimeEnvSchema.extend(redisEnvSchema.shape).e
   SMTP_PASS: z.string().optional(),
   MAIL_FROM: z.string().min(1),
   WEB_APP_URL: z.url(),
-  /** Varredura de jobs terminais sem `notified_at` (eventos Redis perdidos). */
+  NOTIFIER_HEALTH_PORT: z.coerce.number().int().min(1).max(65_535).default(9100),
   NOTIFIER_RECOVERY_INTERVAL_SECONDS: z.coerce.number().int().min(30).default(120),
   NOTIFIER_RECOVERY_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(20)
 });

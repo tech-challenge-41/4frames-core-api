@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: 4frames-config
+  namespace: 4frames
+data:
+  # Front em modo dev (pnpm dev no 4frames-web-app) até ele entrar no cluster.
+  CORS_ORIGIN: http://localhost:5173,http://localhost:8080
+  WEB_APP_URL: http://localhost:5173
+  DB_HOST: host.docker.internal
+  AWS_ENDPOINT_URL: http://host.docker.internal:4566
+  SQS_QUEUE_URL: http://host.docker.internal:4566/000000000000/4frames-video-uploads
+  SQS_DLQ_URL: http://host.docker.internal:4566/000000000000/4frames-video-uploads-dlq
+  REDIS_URL: redis://host.docker.internal:6379
+  SMTP_HOST: host.docker.internal

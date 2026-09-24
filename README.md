@@ -21,8 +21,8 @@ que mudou em relação ao ADR-001.
 | `apps/worker`     | `@4frames/worker`   | Worker: consome a fila SQS, extrai os frames com ffmpeg, gera o zip e publica o progresso        |
 | `apps/notifier`   | `@4frames/notifier` | Assina `jobs.events`, envia e-mail (Pug + SMTP/Mailpit) e recupera jobs sem `notified_at`        |
 | `packages/shared` | `@4frames/shared`   | Prisma (schema, migrations, seeds e client), env, logger, contratos de job, clientes AWS e Redis |
-| `infra/`          | –                   | Scripts de init do LocalStack                                                                    |
-| `k8s/`            | –                   | Manifestos da API/worker (padrão garagio-api; ver [k8s/README.md](./k8s/README.md))              |
+| `infra/`          | –                   | LocalStack (`localstack/init`) e manifestos Kubernetes com Kustomize (`k8s/`)                    |
+| `scripts/`        | –                   | `k8s-local.sh`: cluster Kind local com a stack completa                                          |
 
 A API segue arquitetura hexagonal em `apps/api/src`: `domain` (ports e erros), `application`
 (use cases e DTOs), `infra` (HTTP, serviços, logging) e `dependencies` (container de DI).
@@ -31,7 +31,7 @@ A API segue arquitetura hexagonal em `apps/api/src`: `domain` (ports e erros), `
 
 - Node.js 24 (ver `.nvmrc`) e pnpm 10
 - Docker
-- Para o modo Kubernetes local: [kind](https://kind.sigs.k8s.io/), `kubectl` e `envsubst` (pacote `gettext`)
+- Para o cluster local: [kind](https://kind.sigs.k8s.io/) e `kubectl`
 
 ## Desenvolvimento
 
@@ -50,7 +50,7 @@ docker compose up -d --build
 Sobe Postgres, Redis, Mailpit, LocalStack, o serviço `migrate` (migrations e seed, depois encerra), a
 API em modo desenvolvimento em `http://localhost:3000`, o **worker** (por padrão **2 vídeos em paralelo** no mesmo
 processo via `WORKER_MAX_PARALLEL_JOBS`; use `docker compose up --scale worker=N` para mais réplicas) e o **notifier** (e-mail em
-`job.done`/`job.failed` via SMTP conforme `SMTP_*` no `.env` — ex.: Mailtrap ou Mailpit em http://localhost:8025).
+`job.done`/`job.failed` pelo SMTP do Mailpit, com a caixa em http://localhost:8025).
 
 Para recriar só o notificador após mudanças no código: `docker compose up -d --build notifier`.
 
@@ -70,67 +70,43 @@ pnpm dev:api
 - Não rode a API nos dois modos ao mesmo tempo: os dois usam a porta 3000. Para trocar, use
   `docker compose stop api`.
 
-### Kubernetes (kind) — demo de escala
+### Cluster Kubernetes local (Kind)
 
-Mesmo padrão do `garagio-api`: YAML em [`k8s/`](./k8s/), `kind-config.yaml` na raiz e
-[`scripts/k8s-local.sh`](./scripts/k8s-local.sh). A infra (Postgres, Redis, LocalStack, Mailpit)
-fica no **Compose**; API e worker rodam no cluster. O KEDA escala o worker pela profundidade da
-fila SQS (um vídeo por réplica). Detalhes em [k8s/README.md](./k8s/README.md).
-
-**Subir**
+É onde a stack roda e escala como no ADR-002: API com HPA, worker escalado pelo KEDA pela profundidade da
+fila SQS (um vídeo por réplica) e notifier. A infra (Postgres, Redis, LocalStack e Mailpit) continua no
+Compose, fora do cluster.
 
 ```bash
-cp .env.example .env          # se ainda não tiver
-# No Compose, o notifier usa SMTP_HOST=mailpit (container). No host use localhost.
 ./scripts/k8s-local.sh up
 ```
 
-O script: sobe a infra no Compose → migrate/seed → cria o cluster kind → build + `kind load` das
-imagens → aplica os manifestos → instala o KEDA e configura credenciais LocalStack no operator.
+O script sobe a infra no Compose e roda migrations e seed, cria o cluster, constrói e carrega as três
+imagens, instala o KEDA e aplica o overlay `infra/k8s/overlays/local`. Pare antes `api`, `worker` e
+`notifier` do Compose, que disputariam a mesma fila: `docker compose stop api worker notifier`.
 
-**Não** deixe `api`/`worker` do Compose rodando ao mesmo tempo (disputam a mesma fila). Pare-os se
-estiverem no ar: `docker compose stop api worker notifier`.
+| O quê       | Como                                                                                         |
+| ----------- | -------------------------------------------------------------------------------------------- |
+| API         | http://localhost:31000/health-check e http://localhost:31000/api-docs                        |
+| Login       | `POST /auth` com `admin@admin.com` / `123456` (seed)                                         |
+| Front       | No `4frames-web-app`: `VITE_API_URL=http://localhost:31000 pnpm dev` → http://localhost:5173 |
+| Escala      | `kubectl -n 4frames get pods -l app.kubernetes.io/name=worker -w` enquanto enfileira vídeos  |
+| Status/logs | `./scripts/k8s-local.sh status` / `./scripts/k8s-local.sh logs`                              |
+| Desligar    | `./scripts/k8s-local.sh down` (apaga o cluster; a infra do Compose continua)                 |
 
-**Testar**
-
-| O quê        | Como                                                                 |
-| ------------ | -------------------------------------------------------------------- |
-| API          | http://localhost:31000/health-check e http://localhost:31000/api-docs |
-| Login        | `POST /auth` com `admin@admin.com` / `123456` (seed)                 |
-| Front        | No `4frames-web-app`: `VITE_API_URL=http://localhost:31000` e `pnpm dev` → http://localhost:5173 |
-| Fluxo multi  | Converter vários vídeos → Meus vídeos → status / download            |
-| Escala KEDA  | `kubectl get pods -l app=4frames-worker -w` enquanto enfileira jobs  |
-| Status/logs  | `./scripts/k8s-local.sh status` / `./scripts/k8s-local.sh logs`      |
-
-```bash
-# smoke rápido
-curl -s http://localhost:31000/health-check
-curl -s -X POST http://localhost:31000/auth \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"admin@admin.com","password":"123456"}'
-```
-
-**Desligar**
-
-```bash
-./scripts/k8s-local.sh down   # apaga o cluster kind
-docker compose stop           # opcional: para a infra no Compose
-```
-
-Disco: build + `kind load` ocupam bastante espaço. Se o `kind load` falhar com *no space left*,
-rode `docker system prune -af` (cuidado: remove imagens não usadas) e tente de novo.
+Layout dos manifestos, o que o script faz passo a passo e o deploy de uma tag `release-*`:
+[infra/k8s/README.md](./infra/k8s/README.md).
 
 ### Serviços locais
 
-| Serviço    | Endereço                                                                              | Para quê                                                    |
-| ---------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| API (Compose / `pnpm`) | http://localhost:3000 (`/api-docs`)                                         | REST                                                        |
-| API (kind) | http://localhost:31000 (`/api-docs`)                                                  | REST no cluster local                                       |
-| PostgreSQL | localhost:5432                                                                        | Banco                                                       |
-| LocalStack | http://localhost:4566                                                                 | S3 e SQS                                                    |
-| Redis      | localhost:6379                                                                        | Progresso e eventos de job                                  |
-| Mailpit    | SMTP em localhost:1025 (ou `mailpit:1025` no Compose), caixa em http://localhost:8025 | Opcional; use se `SMTP_HOST` no `.env` apontar para Mailpit |
-| Notifier   | (sem porta HTTP; logs via `docker compose logs -f notifier`)                          | E-mail ao terminar/falhar job (Compose; não está no kind)   |
+| Serviço     | Endereço                                                                           | Para quê                                     |
+| ----------- | ---------------------------------------------------------------------------------- | -------------------------------------------- |
+| API         | http://localhost:3000 (`/api-docs`)                                                | REST (Compose ou `pnpm dev:api`)             |
+| API no Kind | http://localhost:31000 (`/api-docs`)                                               | REST no cluster local                        |
+| PostgreSQL  | localhost:5432                                                                     | Banco                                        |
+| LocalStack  | http://localhost:4566                                                              | S3 e SQS                                     |
+| Redis       | localhost:6379                                                                     | Progresso e eventos de job                   |
+| Mailpit     | SMTP em localhost:1025 (`mailpit:1025` no Compose), caixa em http://localhost:8025 | E-mails de desenvolvimento (substitui o SES) |
+| Notifier    | `GET /healthz` na porta 9100; logs via `docker compose logs -f notifier`           | E-mail ao terminar/falhar job                |
 
 ### Comandos (na raiz)
 
@@ -185,10 +161,22 @@ As imagens de produção são construídas a partir da raiz do monorepo:
 ```bash
 docker build -f apps/api/Dockerfile -t 4frames-api .
 docker build -f apps/worker/Dockerfile -t 4frames-worker .
+docker build -f apps/notifier/Dockerfile -t 4frames-notifier .
 ```
 
 A imagem do worker instala `ffmpeg` (como o projeto base), roda como usuário `node` e expõe a porta `9100`
 (`/healthz`).
+
+## CI/CD (GitHub Actions)
+
+- **CI** (`.github/workflows/ci.yml`), em PR e push para `develop`/`main`: `test` (com gate de cobertura Jest, sem
+  SonarCloud) → `lint` → `type-check` → validação dos manifestos Kubernetes → build das imagens `api`, `worker` e
+  `notifier`.
+- **CD** (`.github/workflows/cd.yml`), em tag `release-*`: publica as imagens versionadas no GHCR, sobe um cluster Kind
+  efêmero com o KEDA, aplica `infra/k8s/overlays/ci` e roda smoke (`/health-check`, `/healthz`, rollout do notifier).
+
+Deploy da mesma tag num cluster local, só trocando as tags de imagem: [infra/k8s/README.md](./infra/k8s/README.md).
+Regras de merge (CI verde + revisão de outra pessoa, sem branch protection no plano Free): [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## Endpoints
 
@@ -218,9 +206,9 @@ recebe `400`.
    `PROCESSING`) → acompanha o status: `UPLOAD_PENDING` → `QUEUED` → `PROCESSING` → `DONE`/`FAILED`/`EXPIRED`.
 5. Quando `DONE`, `GET /videos/{jobId}/download` devolve uma URL pré-assinada de `GET` para o `.zip`.
 
-O processamento em si é feito pelo worker (ver [Worker](#worker)). **Ainda não implementado**: o
-`apps/notifier` (envio de e-mail em `job.done`/`job.failed`), e toda a camada de infraestrutura do
-ADR-002 (Kubernetes local, CI/CD, observabilidade) — ver "Known gaps" no [CLAUDE.md](./CLAUDE.md).
+O processamento em si é feito pelo worker (ver [Worker](#worker)), e o `apps/notifier` manda o e-mail em
+`job.done`/`job.failed`. Ainda faltam, do ADR-002, o Ingress e o metrics-server no cluster e a observabilidade
+— ver "Known gaps" no [CLAUDE.md](./CLAUDE.md).
 
 ## Worker
 

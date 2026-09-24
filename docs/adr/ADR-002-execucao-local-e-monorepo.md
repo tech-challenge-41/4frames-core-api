@@ -30,22 +30,22 @@ Três pontos pesaram na revisão:
 
 Os serviços gerenciados da AWS dão lugar a equivalentes locais, e a orquestração do ADR-001 continua em Kubernetes:
 
-| ADR-001                                 | Substituto local                                                                        | Situação em 17/09                            |
-| --------------------------------------- | --------------------------------------------------------------------------------------- | -------------------------------------------- |
-| EKS                                     | Cluster Kubernetes local                                                                | Previsto                                     |
-| ALB (AWS Load Balancer Controller)      | Ingress controller do cluster                                                           | Previsto                                     |
-| HPA na API                              | HPA na API, com metrics-server                                                          | Previsto                                     |
-| KEDA (scaler `aws-sqs-queue`) no worker | KEDA com o mesmo scaler, apontado para o LocalStack (`awsEndpoint`)                     | Previsto                                     |
-| Segredos no Kubernetes + IRSA           | Secrets e ConfigMaps; credenciais fixas do LocalStack no lugar do IRSA                  | Previsto                                     |
-| ECR + deploy no EKS                     | Imagens no GitHub Container Registry por tag `release-*`; deploy no cluster local       | Previsto                                     |
-| S3 com Event Notifications              | LocalStack S3: bucket, CORS e notificação `videos/` → SQS                               | Implementado                                 |
-| SQS + DLQ                               | LocalStack SQS, redrive para a DLQ após 3 recebimentos                                  | Implementado                                 |
-| RDS PostgreSQL 16                       | Container `postgres:16`                                                                 | Implementado                                 |
-| ElastiCache Redis                       | Container `redis:7`                                                                     | Implementado (progresso e eventos do worker) |
-| SES                                     | Mailpit (SMTP local com caixa web)                                                      | Container no ar; uso pelo notifier previsto  |
-| Terraform                               | Scripts de init do LocalStack, migrations do Prisma e manifestos Kubernetes versionados | Scripts e migrations implementados           |
-| CloudFront no download                  | URL pré-assinada de GET do S3                                                           | Previsto                                     |
-| OpenTelemetry + Datadog + CloudWatch    | Prometheus + Grafana                                                                    | Previsto                                     |
+| ADR-001                                 | Substituto local                                                                        | Situação em 17/09                                                         |
+| --------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| EKS                                     | Cluster Kubernetes local                                                                | Previsto                                                                  |
+| ALB (AWS Load Balancer Controller)      | Ingress controller do cluster                                                           | Previsto                                                                  |
+| HPA na API                              | HPA na API, com metrics-server                                                          | Previsto                                                                  |
+| KEDA (scaler `aws-sqs-queue`) no worker | KEDA com o mesmo scaler, apontado para o LocalStack (`awsEndpoint`)                     | Previsto                                                                  |
+| Segredos no Kubernetes + IRSA           | Secrets e ConfigMaps; credenciais fixas do LocalStack no lugar do IRSA                  | Previsto                                                                  |
+| ECR + deploy no EKS                     | Imagens no GitHub Container Registry por tag `release-*`; deploy no cluster local       | CI/CD + GHCR implementados; cluster local via Kind/manifestos `infra/k8s` |
+| S3 com Event Notifications              | LocalStack S3: bucket, CORS e notificação `videos/` → SQS                               | Implementado                                                              |
+| SQS + DLQ                               | LocalStack SQS, redrive para a DLQ após 3 recebimentos                                  | Implementado                                                              |
+| RDS PostgreSQL 16                       | Container `postgres:16`                                                                 | Implementado                                                              |
+| ElastiCache Redis                       | Container `redis:7`                                                                     | Implementado (progresso e eventos do worker)                              |
+| SES                                     | Mailpit (SMTP local com caixa web)                                                      | Container no ar; uso pelo notifier previsto                               |
+| Terraform                               | Scripts de init do LocalStack, migrations do Prisma e manifestos Kubernetes versionados | Scripts e migrations implementados                                        |
+| CloudFront no download                  | URL pré-assinada de GET do S3                                                           | Previsto                                                                  |
+| OpenTelemetry + Datadog + CloudWatch    | Prometheus + Grafana                                                                    | Previsto                                                                  |
 
 Consequências diretas no código:
 
@@ -118,9 +118,10 @@ O worker segue o projeto base apresentado aos investidores: `ffmpeg -vf fps=1`, 
 - Fluxo de branches `feature → develop → main`, com tag `release-*` em `main` a cada entrega.
 - Os repositórios são privados no plano GitHub Free, que não oferece branch protection. A revisão obrigatória vale por
   regra do grupo (`CONTRIBUTING.md`), não por bloqueio do GitHub.
-- Sem SonarQube: o gate de qualidade é o limite de cobertura do Jest e do Vitest no CI (previsto).
-- O CI valida os manifestos Kubernetes. A cada tag `release-*`, o CD publica as imagens no GHCR e faz o deploy delas num
-  cluster Kubernetes efêmero no GitHub Actions, com smoke test (previsto).
+- Sem SonarQube/SonarCloud: o gate de qualidade é o `coverageThreshold` do Jest no CI.
+- O CI (`.github/workflows/ci.yml`) roda test → lint → type-check → validação dos manifestos Kubernetes → build das
+  imagens `api`, `worker` e `notifier`. A cada tag `release-*`, o CD (`.github/workflows/cd.yml`) publica as imagens no
+  GHCR, sobe um Kind efêmero no GitHub Actions, aplica `infra/k8s` e faz smoke test. Situação: implementado.
 - Hook de pre-commit com lint-staged (ESLint e Prettier nos arquivos staged). Situação: implementado.
 
 ## 3. Consequências

@@ -5,7 +5,7 @@ import { type Logger } from '@4frames/shared/logger';
 
 export interface HealthServerOptions {
   port: number;
-  /** true enquanto o laço de consumo está vivo. */
+  /** true enquanto o app está saudável: o laço do worker rodando, a assinatura do notifier ativa. */
   isAlive: () => boolean;
   logger: Logger;
   host?: string;
@@ -13,7 +13,8 @@ export interface HealthServerOptions {
 
 /**
  * Servidor HTTP mínimo para a liveness probe do Kubernetes: `GET /healthz` → 200 ou 503.
- * A mesma porta recebe o `/metrics` no Card 10.
+ * Mora no shared porque worker e notifier precisam do mesmo sinal, sem servidor HTTP próprio
+ * (a API responde pela própria porta). A mesma porta recebe o `/metrics` no Card 10.
  */
 export class HealthServer {
   private readonly server: http.Server;

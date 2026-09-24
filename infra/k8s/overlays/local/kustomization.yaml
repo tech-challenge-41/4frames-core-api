@@ -1,0 +1,35 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Cluster Kind local, aplicado por scripts/k8s-local.sh. A infra (Postgres, Redis, LocalStack e
+# Mailpit) roda no Compose do host, e os pods chegam nela por `host.docker.internal`. O script troca
+# esse nome pelo gateway da rede `kind`, detectado na hora: no Linux o Kind não resolve
+# host.docker.internal. As imagens são as `:local` do base, construídas e carregadas pelo script.
+resources:
+  - ../../base
+
+patches:
+  # Endereços da infra do Compose vistos de dentro do cluster.
+  - path: configmap.yaml
+  # API exposta ao host pela porta do kind-config.yaml, até o Ingress entrar.
+  - path: api-service.yaml
+  # O Secret vem do .env (as mesmas credenciais com que o Compose sobe o Postgres), criado pelo script.
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: 4frames-secret
+        namespace: 4frames
+  - target:
+      group: keda.sh
+      version: v1alpha1
+      kind: ScaledObject
+      name: worker
+    patch: |-
+      - op: replace
+        path: /spec/triggers/0/metadata/queueURL
+        value: http://host.docker.internal:4566/000000000000/4frames-video-uploads
+      - op: replace
+        path: /spec/triggers/0/metadata/awsEndpoint
+        value: http://host.docker.internal:4566

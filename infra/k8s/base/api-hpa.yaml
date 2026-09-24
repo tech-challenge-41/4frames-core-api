@@ -1,0 +1,24 @@
+# Escala a API por CPU. O percentual é sobre o requests.cpu do Deployment, e só funciona com o
+# metrics-server no cluster; sem ele o HPA ainda garante o mínimo de réplicas.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api
+  namespace: 4frames
+  labels:
+    app.kubernetes.io/name: api
+    app.kubernetes.io/part-of: 4frames
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

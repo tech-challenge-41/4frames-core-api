@@ -107,21 +107,47 @@ export class NotifyVideoJobTerminalUseCase {
       return;
     }
 
-    await this.notificationService.notify({
-      to: context.userEmail,
-      recipientName: recipientNameFromEmail(context.userEmail),
-      jobId: context.jobId,
-      fileName: context.fileName,
-      webAppBaseUrl: this.webAppBaseUrl,
-      event
-    });
+    // As checagens acima são pré-filtros baratos sobre uma leitura que já pode estar velha. Quem
+    // decide se este processo envia o e-mail é o claim: escrita condicional a notified_at IS NULL.
+    const claimed = await this.repository.claimForNotify(jobId);
 
-    const marked = await this.repository.markNotified(jobId);
+    if (!claimed) {
+      this.logger.debug('Job already claimed by another notifier, skipping', { jobId });
+      return;
+    }
 
-    if (!marked) {
-      this.logger.warn('Notification sent but notified_at was already set', { jobId });
-    } else {
-      this.logger.info('Job terminal notification sent', { jobId, eventType: event.type, to: context.userEmail });
+    try {
+      await this.notificationService.notify({
+        to: context.userEmail,
+        recipientName: recipientNameFromEmail(context.userEmail),
+        jobId: context.jobId,
+        fileName: context.fileName,
+        webAppBaseUrl: this.webAppBaseUrl,
+        event
+      });
+    } catch (error) {
+      await this.releaseClaimSafely(jobId);
+      throw error;
+    }
+
+    this.logger.info('Job terminal notification sent', { jobId, eventType: event.type, to: context.userEmail });
+  }
+
+  /**
+   * Libera o claim depois de um envio que falhou, para a varredura pegar o job de novo. Se o
+   * próprio release falhar, o job fica com `notified_at` preenchido sem e-mail enviado e a
+   * varredura não vai mais encontrá-lo: por isso o erro é logado com o jobId. Não substitui o erro
+   * do envio, que é a causa raiz e sobe para quem chamou.
+   */
+  private async releaseClaimSafely(jobId: string): Promise<void> {
+    try {
+      await this.repository.releaseClaim(jobId);
+    } catch (error) {
+      this.logger.error(
+        'Failed to release notification claim: job stays marked as notified with no e-mail sent',
+        error instanceof Error ? error : undefined,
+        { jobId, errorMessage: error instanceof Error ? error.message : String(error) }
+      );
     }
   }
 }
