@@ -11,8 +11,18 @@ spec:
     name: 4frames-worker
   minReplicaCount: 1
   maxReplicaCount: 5
+
   cooldownPeriod: 60
   pollingInterval: 5
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 30
+          policies:
+            - type: Percent
+              value: 100
+              periodSeconds: 15
   triggers:
     - type: aws-sqs-queue
       authenticationRef:
