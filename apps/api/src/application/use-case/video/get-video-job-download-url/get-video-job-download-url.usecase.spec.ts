@@ -3,10 +3,11 @@ import { DomainErrorTypes } from '@/domain/error/error-types';
 import { type IVideoJobService, type VideoJobRecord } from '@/domain/ports/service/video-job.service.interface';
 import { type IVideoStorageService } from '@/domain/ports/service/video-storage.service.interface';
 
-import { CompleteVideoJobUseCase } from './complete-video-job.usecase';
+import { GetVideoJobDownloadUrlUseCase } from './get-video-job-download-url.usecase';
 
 const JOB_ID = '6f1c2a9e-4b7d-4c1a-9f3e-2d8b5a7c9e10';
 const MISSING_JOB_ID = '00000000-0000-4000-8000-000000000000';
+const ZIP_KEY = `zips/1/${JOB_ID}.zip`;
 
 function buildJob(overrides: Partial<VideoJobRecord> = {}): VideoJobRecord {
   return {
@@ -15,16 +16,16 @@ function buildJob(overrides: Partial<VideoJobRecord> = {}): VideoJobRecord {
     fileName: 'my-video.mp4',
     contentType: 'video/mp4',
     fileSize: 1024,
-    status: 'UPLOAD_PENDING',
+    status: 'DONE',
     failureReason: null,
-    zipKey: null,
+    zipKey: ZIP_KEY,
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     ...overrides
   };
 }
 
-describe('CompleteVideoJobUseCase', () => {
-  let useCase: CompleteVideoJobUseCase;
+describe('GetVideoJobDownloadUrlUseCase', () => {
+  let useCase: GetVideoJobDownloadUrlUseCase;
   let videoJobService: jest.Mocked<IVideoJobService>;
   let videoStorageService: jest.Mocked<IVideoStorageService>;
 
@@ -43,22 +44,22 @@ describe('CompleteVideoJobUseCase', () => {
       headObject: jest.fn()
     };
 
-    useCase = new CompleteVideoJobUseCase({ videoJobService, videoStorageService });
+    useCase = new GetVideoJobDownloadUrlUseCase({ videoJobService, videoStorageService });
   });
 
-  it('should confirm the upload and move the job from UPLOAD_PENDING to QUEUED', async () => {
+  it('should return a presigned download url when the job is DONE', async () => {
     videoJobService.findById.mockResolvedValue(buildJob());
-    videoStorageService.headObject.mockResolvedValue(true);
-    videoJobService.updateStatus.mockResolvedValue(buildJob({ status: 'QUEUED' }));
+    videoStorageService.generatePresignedDownloadUrl.mockResolvedValue({
+      downloadUrl: 'https://bucket.example.com/signed',
+      expiresIn: 300
+    });
 
     const result = await useCase.execute({ userId: 1, jobId: JOB_ID });
 
-    expect(videoStorageService.headObject).toHaveBeenCalledWith(`videos/1/${JOB_ID}/source.mp4`);
-    expect(videoJobService.updateStatus).toHaveBeenCalledWith(JOB_ID, 'QUEUED');
+    expect(videoStorageService.generatePresignedDownloadUrl).toHaveBeenCalledWith(ZIP_KEY, 300);
     expect(result).toEqual({
-      jobId: JOB_ID,
-      status: 'QUEUED',
-      fileName: 'my-video.mp4'
+      downloadUrl: 'https://bucket.example.com/signed',
+      expiresIn: 300
     });
   });
 
@@ -68,8 +69,7 @@ describe('CompleteVideoJobUseCase', () => {
     await expect(useCase.execute({ userId: 1, jobId: MISSING_JOB_ID })).rejects.toMatchObject({
       type: DomainErrorTypes.NOT_FOUND
     });
-    expect(videoStorageService.headObject).not.toHaveBeenCalled();
-    expect(videoJobService.updateStatus).not.toHaveBeenCalled();
+    expect(videoStorageService.generatePresignedDownloadUrl).not.toHaveBeenCalled();
   });
 
   it('should throw NOT_FOUND DomainError when the job belongs to another user', async () => {
@@ -78,27 +78,28 @@ describe('CompleteVideoJobUseCase', () => {
     await expect(useCase.execute({ userId: 1, jobId: JOB_ID })).rejects.toMatchObject({
       type: DomainErrorTypes.NOT_FOUND
     });
-    expect(videoStorageService.headObject).not.toHaveBeenCalled();
+    expect(videoStorageService.generatePresignedDownloadUrl).not.toHaveBeenCalled();
   });
 
-  it('should throw INVALID_STATE DomainError when the job is not UPLOAD_PENDING', async () => {
-    videoJobService.findById.mockResolvedValue(buildJob({ status: 'QUEUED' }));
+  it.each(['UPLOAD_PENDING', 'QUEUED', 'PROCESSING', 'FAILED', 'EXPIRED'])(
+    'should throw INVALID_STATE DomainError when the job status is %s',
+    async status => {
+      videoJobService.findById.mockResolvedValue(buildJob({ status }));
 
-    await expect(useCase.execute({ userId: 1, jobId: JOB_ID })).rejects.toBeInstanceOf(DomainError);
-    await expect(useCase.execute({ userId: 1, jobId: JOB_ID })).rejects.toMatchObject({
-      type: DomainErrorTypes.INVALID_STATE
-    });
-    expect(videoStorageService.headObject).not.toHaveBeenCalled();
-    expect(videoJobService.updateStatus).not.toHaveBeenCalled();
-  });
+      await expect(useCase.execute({ userId: 1, jobId: JOB_ID })).rejects.toBeInstanceOf(DomainError);
+      await expect(useCase.execute({ userId: 1, jobId: JOB_ID })).rejects.toMatchObject({
+        type: DomainErrorTypes.INVALID_STATE
+      });
+      expect(videoStorageService.generatePresignedDownloadUrl).not.toHaveBeenCalled();
+    }
+  );
 
-  it('should throw PRECONDITION_FAILED DomainError when the object is missing in S3', async () => {
-    videoJobService.findById.mockResolvedValue(buildJob());
-    videoStorageService.headObject.mockResolvedValue(false);
+  it('should throw PRECONDITION_FAILED DomainError when the job is DONE but has no zip key', async () => {
+    videoJobService.findById.mockResolvedValue(buildJob({ zipKey: null }));
 
     await expect(useCase.execute({ userId: 1, jobId: JOB_ID })).rejects.toMatchObject({
       type: DomainErrorTypes.PRECONDITION_FAILED
     });
-    expect(videoJobService.updateStatus).not.toHaveBeenCalled();
+    expect(videoStorageService.generatePresignedDownloadUrl).not.toHaveBeenCalled();
   });
 });

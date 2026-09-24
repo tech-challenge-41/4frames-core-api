@@ -136,23 +136,33 @@ A imagem do worker instala `ffmpeg` (como o projeto base), roda como usuário `n
 
 - `POST /auth` — autenticação por email e senha
 - `POST /videos` — cria um job de conversão (`UPLOAD_PENDING`) e devolve uma URL pré-assinada de upload ao S3
-- `POST /videos/:jobId/complete` — confirma o upload no S3 (HEAD do objeto) e avança o job para `QUEUED`
+- `GET /videos` — lista os jobs do usuário autenticado, paginado (`limit`/`offset`), mais recentes primeiro
 - `GET /videos/:jobId` — consulta status do job (autorizado apenas para o dono)
+- `GET /videos/:jobId/events` — progresso em tempo real via SSE (Server-Sent Events), alimentado pelo Redis Pub/Sub que o worker publica
+- `POST /videos/:jobId/complete` — confirma o upload no S3 (HEAD do objeto) e avança o job para `QUEUED`
+- `POST /videos/:jobId/cancel` — cancela um job em `UPLOAD_PENDING` ou `QUEUED` (reaproveita o status `EXPIRED`)
+- `GET /videos/:jobId/download` — URL pré-assinada de download do `.zip` (só quando o job está `DONE`)
 - `GET /health-check` — health check
 - `GET /api-docs` — documentação OpenAPI
 
-Todas as rotas de `/videos` exigem `Authorization: Bearer <token>`. O `jobId` é um UUID; um valor em outro formato recebe `400`.
+Todas as rotas de `/videos` exigem `Authorization: Bearer <token>`, exceto `GET /videos/:jobId/events`,
+que aceita o token via `?token=` (o `EventSource` do navegador não permite headers customizados — ver
+[CLAUDE.md](./CLAUDE.md), seção "Real-time progress"). O `jobId` é um UUID; um valor em outro formato
+recebe `400`.
 
 ### Fluxo de conversão
 
 1. `POST /videos` com `{ fileName, fileSize, contentType }` (`video/mp4` ou `video/quicktime`, até 500MB) → devolve `{ jobId, uploadUrl, expiresIn }`, com `jobId` em UUID.
 2. O cliente faz `PUT` do arquivo direto na `uploadUrl` (bytes não passam pela API).
-3. `POST /videos/{jobId}/complete` → confirma o objeto no bucket e marca `QUEUED`.
-4. `GET /videos/{jobId}` → consulta o status a qualquer momento (`UPLOAD_PENDING` → `QUEUED` → `PROCESSING` → `DONE`/`FAILED`/`EXPIRED`).
+3. `POST /videos/{jobId}/complete` → confirma o objeto no bucket e marca `QUEUED`. Até esse ponto o job
+   ainda pode ser cancelado com `POST /videos/{jobId}/cancel`.
+4. `GET /videos/{jobId}` (polling) ou `GET /videos/{jobId}/events` (SSE, progresso ao vivo durante
+   `PROCESSING`) → acompanha o status: `UPLOAD_PENDING` → `QUEUED` → `PROCESSING` → `DONE`/`FAILED`/`EXPIRED`.
+5. Quando `DONE`, `GET /videos/{jobId}/download` devolve uma URL pré-assinada de `GET` para o `.zip`.
 
-O processamento é feito pelo worker (ver [Worker](#worker)). **Ainda não implementado** (ver ADR-001,
-seção 2.2): a listagem de jobs do usuário (`GET /videos`) e o download do resultado
-(`GET /videos/{jobId}/download`). O zip já fica no bucket em `zips/{userId}/{jobId}.zip`.
+O processamento em si é feito pelo worker (ver [Worker](#worker)). **Ainda não implementado**: o
+`apps/notifier` (envio de e-mail em `job.done`/`job.failed`), e toda a camada de infraestrutura do
+ADR-002 (Kubernetes local, CI/CD, observabilidade) — ver "Known gaps" no [CLAUDE.md](./CLAUDE.md).
 
 ## Worker
 

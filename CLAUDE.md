@@ -90,9 +90,11 @@ Prisma directly from a controller. Infra services get Prisma from
 
 ## Adding a new endpoint
 
-Follow the exact shape of the `video` aggregate (`create-video-job`,
-`complete-video-job`, `get-video-job-status`) — don't invent a new convention.
-All paths below are relative to `apps/api/src`.
+Follow the exact shape of the `video` aggregate — `create-video-job`,
+`complete-video-job`, `cancel-video-job`, `get-video-job-status`,
+`get-video-job-download-url`, `list-video-jobs`, and `get-video-job-events` (SSE,
+see its own note below) — don't invent a new convention. All paths below are
+relative to `apps/api/src`.
 
 1. **Port** (if a new infra capability is needed): add a method to the relevant
    `domain/ports/service/*.interface.ts`, or create a new interface if it's a new
@@ -109,8 +111,12 @@ All paths below are relative to `apps/api/src`.
    `InvalidRequestParamError` (400) — see `CompleteVideoJobController`.
 4. **Controller**: `infra/http/controller/<aggregate>/<action>.controller.ts`,
    implements `IController` (single `handle(req, res)` method). One controller per
-   route, not one per aggregate — e.g. video has three separate controllers, not
-   one `VideoController` with multiple methods.
+   route, not one per aggregate — video has seven separate controllers, not one
+   `VideoController` with multiple methods. The one exception is
+   `GetVideoJobEventsController` (SSE): it still implements `IController`, but its
+   `handle()` keeps the connection open and resolves only when the stream ends —
+   see the comment at the top of that file before copying its shape for a
+   non-streaming endpoint.
 5. **Route**: wire it into the aggregate's existing `infra/http/route/<aggregate>.ts`.
    Apply `authMiddleware` for any route requiring a logged-in user, then
    `validateMiddleware(schema)` if there's a body schema, then
@@ -186,6 +192,44 @@ but belongs to another user" identically — same `DomainError` with
 `NOT_FOUND`, same message. Never leak "it exists but isn't yours" as a
 different error/status. See `CompleteVideoJobUseCase` and
 `GetVideoJobStatusUseCase` for the reference implementation.
+
+## Real-time progress (SSE)
+
+`GET /videos/:jobId/events` streams job progress as it happens, instead of the
+frontend having to poll `GET /videos/:jobId`. It is fed by the same Redis Pub/Sub
+channel the worker already publishes to (see "Worker" below) — the API adds no new
+producer, only a subscriber.
+
+- `RedisJobEventSubscriberService` (`infra/services/`) opens one **dedicated**
+  Redis connection per SSE connection via `createRedisClient()` — never the
+  request-scoped or a shared client, because a connection in subscriber mode stops
+  accepting other commands. It reads the current value of `progress:{jobId}`
+  before subscribing (so a client connecting mid-processing doesn't wait for the
+  next throttled publish) and closes the connection when the HTTP request/response
+  closes.
+- Progress percentages come straight from ffmpeg's own `-progress pipe:1` output
+  (parsed against the real video duration from `ffprobe`), not a fixed timer or an
+  estimate — see "Worker" below. A short video can look like it "jumps" because the
+  0–85% range is throttled to at most one update per second, and 85→90→99→100 are
+  fixed checkpoints for zip/upload/done, not a continuous measurement of those
+  steps.
+- Authorization runs once, via `GetVideoJobStatusUseCase`, **before** `res.writeHead`
+  — a `DomainError` there is still translated normally by `controllerWrapper`.
+  After the stream starts, an error is written as an SSE `{ type: 'error', message }`
+  event and the stream ends; there's no way to send an HTTP error status anymore.
+- `EventSource` in the browser can't send custom headers, so `Authorization: Bearer`
+  doesn't reach this route. `sseAuthMiddleware` (not `authMiddleware`) accepts the
+  token via `?token=` as a fallback, restricted to this one route — an
+  `Authorization` header is still tried first (for curl/tests). A token in a query
+  string can leak into access logs and proxies; don't reuse this middleware
+  elsewhere.
+- The stream ends itself on a terminal event (`job.done`/`job.failed`); a 15s
+  heartbeat comment (`: heartbeat\n\n`) keeps proxies from closing an idle
+  connection meanwhile.
+- The frontend keeps `GET /videos/:jobId` polling running in parallel as the
+  source of truth for status; SSE only adds the live percentage during
+  `PROCESSING`. `EventSource` reconnects on its own, so a dropped SSE connection
+  is not treated as fatal on either side.
 
 ## Local environment (Compose + LocalStack)
 
@@ -304,16 +348,44 @@ For endpoints touching S3, do a real curl smoke test against LocalStack
 thin Prisma/AWS SDK adapters), so a manual end-to-end check is the only thing
 that catches integration issues like the CORS/checksum gaps above.
 
-## Known gaps (per ADR-001)
+## What's implemented (video job lifecycle, per ADR-001 §2.2)
 
-- `apps/notifier` only starts, logs and shuts down gracefully: nobody consumes `jobs.events` yet, so no
-  email is sent. `.env.example` already lists `SMTP_*`, `MAIL_FROM` and `WEB_APP_URL`, which no app reads yet.
-- No `GET /videos` (list jobs for the current user).
-- No `GET /videos/:jobId/download` (presigned/CloudFront download URL when
-  `DONE`).
-- The worker writes `failure_reason`, `zip_key`, `frame_count` and `duration_seconds`; `notified_at` and
-  `correlation_id` are still unused (notifier and correlation logging come later). Only `failure_reason`
-  is exposed by the API, in `GET /videos/:jobId`.
+The full lifecycle of a single job is implemented and tested end to end:
+`POST /videos` (create + presigned upload URL) → direct browser `PUT` to S3 →
+`POST /videos/:jobId/complete` (confirm + `QUEUED`) →
+`POST /videos/:jobId/cancel` (cancel while `UPLOAD_PENDING`/`QUEUED`, reuses the
+`EXPIRED` status — see the comment on `VideoJobService.cancelIfPending`, no
+separate `CANCELLED` status was added) → S3 event → SQS → `apps/worker` (ffmpeg
+frames + zip, `PROCESSING` → `DONE`/`FAILED`) →
+`GET /videos/:jobId` (status polling) and `GET /videos/:jobId/events` (SSE live
+progress) → `GET /videos/:jobId/download` (presigned S3 `GET`, only when `DONE`)
+→ `GET /videos` (paginated list of the current user's jobs, `offset`/`limit`,
+ordered by `created_at desc`).
+
+## Known gaps
+
+**Application-level (per ADR-001):**
+
+- `apps/notifier` only starts, logs and shuts down gracefully: nobody consumes
+  `jobs.events` yet, so no email is sent on `job.done`/`job.failed`.
+  `.env.example` already lists `SMTP_*`, `MAIL_FROM` and `WEB_APP_URL`, which no
+  app reads yet. This is the last piece of the ADR-001 application flow that
+  hasn't been started.
+- `notified_at` and `correlation_id` on `video_jobs` are still unused (they exist
+  for the notifier and for correlated logging across api/worker/notifier, both
+  pending on the notifier landing).
 - `POST /auth` vs. the ADR's documented `POST /auth/login` — the route name
   never got reconciled with the ADR text; not a functional issue, just a doc
   mismatch to be aware of.
+
+**Infrastructure-level (per ADR-002, all "Previsto"/planned in that ADR, not
+started here):**
+
+- No local Kubernetes cluster, Ingress, HPA or KEDA — everything today runs via
+  `docker compose`, which ADR-002 explicitly calls the _development_ environment,
+  not the scaling mechanism. There's currently no environment that actually
+  demonstrates the auto-scaling story from ADR-001.
+- No CI/CD: only `.github/PULL_REQUEST_TEMPLATE.md` exists, no GitHub Actions
+  workflow runs lint/test/build, publishes images to GHCR, or deploys to an
+  ephemeral cluster.
+- No Prometheus/Grafana; no metrics exported beyond what's in application logs.

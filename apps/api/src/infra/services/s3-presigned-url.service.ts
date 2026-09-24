@@ -1,8 +1,15 @@
-import { HeadObjectCommand, PutObjectCommand, S3ServiceException, type S3Client } from '@aws-sdk/client-s3';
+import {
+  GetObjectCommand,
+  HeadObjectCommand,
+  PutObjectCommand,
+  S3ServiceException,
+  type S3Client
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 import {
   type IVideoStorageService,
+  type PresignedDownloadUrl,
   type PresignedUploadUrl
 } from '@/domain/ports/service/video-storage.service.interface';
 
@@ -42,6 +49,17 @@ export class S3PresignedUrlService implements IVideoStorageService {
     const uploadUrl = await getSignedUrl(this.presignClient, command, { expiresIn });
 
     return { uploadUrl, expiresIn };
+  }
+
+  public async generatePresignedDownloadUrl(key: string, expiresIn: number): Promise<PresignedDownloadUrl> {
+    const command = new GetObjectCommand({
+      Bucket: this.bucketName,
+      Key: key
+    });
+
+    const downloadUrl = await getSignedUrl(this.presignClient, command, { expiresIn });
+
+    return { downloadUrl, expiresIn };
   }
 
   public async headObject(key: string): Promise<boolean> {

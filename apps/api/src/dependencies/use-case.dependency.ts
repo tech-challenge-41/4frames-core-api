@@ -1,7 +1,10 @@
 import { AuthenticateUserUseCase } from '@/application/use-case/user/authenticate-user/authenticate-user.usecase';
+import { CancelVideoJobUseCase } from '@/application/use-case/video/cancel-video-job/cancel-video-job.usecase';
 import { CompleteVideoJobUseCase } from '@/application/use-case/video/complete-video-job/complete-video-job.usecase';
 import { CreateVideoJobUseCase } from '@/application/use-case/video/create-video-job/create-video-job.usecase';
+import { GetVideoJobDownloadUrlUseCase } from '@/application/use-case/video/get-video-job-download-url/get-video-job-download-url.usecase';
 import { GetVideoJobStatusUseCase } from '@/application/use-case/video/get-video-job-status/get-video-job-status.usecase';
+import { ListVideoJobsUseCase } from '@/application/use-case/video/list-video-jobs/list-video-jobs.usecase';
 import { readUploadUrlTtlSeconds } from '@/infra/config/upload.config';
 import { S3PresignedUrlService } from '@/infra/services/s3-presigned-url.service';
 import { UserAuthenticatorService } from '@/infra/services/user-authenticator.service';
@@ -35,6 +38,25 @@ export async function useCaseDependency(c: Container) {
     new CompleteVideoJobUseCase({
       videoJobService: c.resolve(VideoJobService.name),
       videoStorageService: c.resolve(S3PresignedUrlService.name)
+    })
+  );
+  c.register(
+    GetVideoJobDownloadUrlUseCase.name,
+    new GetVideoJobDownloadUrlUseCase({
+      videoJobService: c.resolve(VideoJobService.name),
+      videoStorageService: c.resolve(S3PresignedUrlService.name)
+    })
+  );
+  c.register(
+    ListVideoJobsUseCase.name,
+    new ListVideoJobsUseCase({
+      videoJobService: c.resolve(VideoJobService.name)
+    })
+  );
+  c.register(
+    CancelVideoJobUseCase.name,
+    new CancelVideoJobUseCase({
+      videoJobService: c.resolve(VideoJobService.name)
     })
   );
 }
