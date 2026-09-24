@@ -150,13 +150,7 @@ export class SqsConsumer {
           const slots = this.maxParallelJobs - this.inFlight;
           const messages = await this.receive(Math.min(slots, 10));
 
-          if (messages.length === 0) {
-            if (this.inFlight > 0) {
-              await this.waitForCapacity();
-            }
-
-            break;
-          }
+          if (messages.length === 0) break;
 
           for (const message of messages) {
             if (this.stopping) {
