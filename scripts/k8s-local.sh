@@ -33,8 +33,10 @@ detect_host_gateway() {
     return
   fi
   local gw
-  # IPAM pode ter entrada IPv6 sem Gateway primeiro — pega o primeiro Gateway IPv4.
-  gw="$(docker network inspect kind -f '{{range .IPAM.Config}}{{if .Gateway}}{{.Gateway}} {{end}}{{end}}' 2>/dev/null | awk '{print $1}')"
+  # A rede tem uma sub-rede IPv4 e outra IPv6, em qualquer ordem. Só serve o gateway IPv4: um IPv6
+  # sem colchetes quebra as URLs do ConfigMap (http://gateway:4566, redis://gateway:6379).
+  gw="$(docker network inspect kind -f '{{range .IPAM.Config}}{{.Gateway}} {{end}}' 2>/dev/null \
+    | tr ' ' '\n' | grep -E '^[0-9]+(\.[0-9]+){3}$' | head -n 1 || true)"
   if [[ -n "$gw" ]]; then
     echo "$gw"
     return
