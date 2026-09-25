@@ -29,6 +29,15 @@ spec:
                 name: 4frames-config
             - secretRef:
                 name: 4frames-secret
+          # Liveness e readiness só começam depois da primeira resposta. Num host carregado a API levou 55 s
+          # para escutar a porta, e a liveness matava as réplicas novas do HPA antes disso. Até 150 s (30 × 5 s).
+          startupProbe:
+            httpGet:
+              path: /health-check
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
           readinessProbe:
             httpGet:
               path: /health-check
