@@ -3,7 +3,8 @@
 # Sobe o 4Frames num cluster Kind local (ADR-002):
 #   - Manifestos: overlay Kustomize infra/k8s/overlays/local (D10)
 #   - Infra (Postgres, Redis, LocalStack, Mailpit) no Compose do host
-#   - API com HPA; worker escalado pelo KEDA pela profundidade da fila SQS
+#   - API com HPA (metrics-server) atrás do Ingress (ingress-nginx) em http://localhost:8080/api
+#   - Worker escalado pelo KEDA pela profundidade da fila SQS
 #
 # Pré-requisitos: docker, kind, kubectl (.env na raiz)
 #
@@ -17,6 +18,9 @@ set -euo pipefail
 
 CLUSTER_NAME="${CLUSTER_NAME:-4frames-local}"
 KEDA_VERSION="${KEDA_VERSION:-2.16.1}"
+METRICS_SERVER_VERSION="${METRICS_SERVER_VERSION:-0.9.0}"
+# O projeto ingress-nginx foi arquivado: 1.15.1 é a última versão publicada.
+INGRESS_NGINX_VERSION="${INGRESS_NGINX_VERSION:-1.15.1}"
 NAMESPACE="4frames"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KIND_CONFIG="$ROOT_DIR/infra/k8s/kind-config.yaml"
@@ -89,6 +93,13 @@ up_infra() {
 up_cluster() {
   if kind get clusters | grep -qx "$CLUSTER_NAME"; then
     echo "Cluster '$CLUSTER_NAME' já existe — reusando"
+    # Sem a porta do Ingress publicada, o cluster é de antes dela no kind-config.yaml ou voltou de um
+    # reinício do Docker Desktop, que devolve o nó sem nenhuma porta. Nos dois casos, só recriar resolve.
+    if ! docker port "${CLUSTER_NAME}-control-plane" 80/tcp >/dev/null 2>&1; then
+      echo "Erro: o nó de '$CLUSTER_NAME' está sem a porta do Ingress publicada no host." >&2
+      echo "      Recrie o cluster: ./scripts/k8s-local.sh down && ./scripts/k8s-local.sh up" >&2
+      exit 1
+    fi
   else
     echo "Criando cluster Kind: $CLUSTER_NAME"
     kind create cluster --name "$CLUSTER_NAME" --config "$KIND_CONFIG"
@@ -107,6 +118,39 @@ build_and_load() {
   kind load docker-image "${images[@]}" --name "$CLUSTER_NAME"
 }
 
+install_metrics_server() {
+  echo "Instalando metrics-server v${METRICS_SERVER_VERSION}"
+  kubectl apply -f "https://github.com/kubernetes-sigs/metrics-server/releases/download/v${METRICS_SERVER_VERSION}/components.yaml"
+
+  # O Kind não assina os certificados do kubelet com a CA do cluster: sem esta flag o metrics-server
+  # recusa a conexão com o kubelet e o HPA fica sem métrica de CPU.
+  if ! kubectl -n kube-system get deployment metrics-server \
+    -o jsonpath='{.spec.template.spec.containers[0].args}' | grep -q -- '--kubelet-insecure-tls'; then
+    kubectl -n kube-system patch deployment metrics-server --type=json \
+      -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+  fi
+  kubectl -n kube-system rollout status deployment/metrics-server --timeout=180s
+
+  # A primeira coleta leva perto de um minuto; até lá o HPA não enxerga a CPU.
+  echo "Aguardando o metrics-server responder (kubectl top nodes)"
+  for _ in $(seq 1 60); do
+    if kubectl top nodes >/dev/null 2>&1; then
+      kubectl top nodes
+      return
+    fi
+    sleep 5
+  done
+  echo "Erro: o metrics-server não respondeu em 5 minutos (kubectl -n kube-system logs deploy/metrics-server)" >&2
+  exit 1
+}
+
+install_ingress_nginx() {
+  echo "Instalando ingress-nginx controller-v${INGRESS_NGINX_VERSION}"
+  # Manifesto para kind: o controller escuta nas portas 80 e 443 do nó, publicadas pelo kind-config.yaml.
+  kubectl apply -f "https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v${INGRESS_NGINX_VERSION}/deploy/static/provider/kind/deploy.yaml"
+  kubectl -n ingress-nginx rollout status deployment/ingress-nginx-controller --timeout=180s
+}
+
 install_keda() {
   if ! kubectl get crd scaledobjects.keda.sh >/dev/null 2>&1; then
     echo "Instalando KEDA v${KEDA_VERSION}"
@@ -115,10 +159,11 @@ install_keda() {
     echo "KEDA já instalado"
   fi
 
-  kubectl wait --for=condition=available --timeout=180s deployment/keda-operator -n keda
-  kubectl wait --for=condition=available --timeout=180s deployment/keda-metrics-apiserver -n keda
+  # 300 s: num cluster recém-criado as imagens do KEDA vêm do ghcr.io, e o pull já levou quase 3 minutos.
+  kubectl wait --for=condition=available --timeout=300s deployment/keda-operator -n keda
+  kubectl wait --for=condition=available --timeout=300s deployment/keda-metrics-apiserver -n keda
   # O webhook valida o ScaledObject no apply: precisa estar de pé antes do deploy.
-  kubectl wait --for=condition=available --timeout=180s deployment/keda-admission -n keda
+  kubectl wait --for=condition=available --timeout=300s deployment/keda-admission -n keda
 
   # LocalStack não tem IMDS: o scaler SQS do KEDA precisa de credenciais estáticas no operator.
   # (TriggerAuthentication sozinho tenta EC2 metadata e falha no kind + LocalStack.)
@@ -150,7 +195,21 @@ apply_app() {
     --dry-run=client -o yaml | kubectl apply -f -
 
   echo "Aplicando o overlay local (infra do Compose em $gateway)"
-  kubectl kustomize "$OVERLAY_DIR" | sed "s/host\.docker\.internal/${gateway}/g" | kubectl apply -f -
+  local manifests
+  manifests="$(kubectl kustomize "$OVERLAY_DIR" | sed "s/host\.docker\.internal/${gateway}/g")"
+  # Os webhooks de admissão do KEDA e do ingress-nginx podem recusar chamadas por alguns segundos depois
+  # que os pods ficam prontos, enquanto o certificado é injetado. O apply é idempotente: tenta de novo.
+  for attempt in 1 2 3 4 5; do
+    if kubectl apply -f - <<<"$manifests"; then
+      break
+    fi
+    if [[ "$attempt" -eq 5 ]]; then
+      echo "Erro: o overlay não foi aplicado depois de 5 tentativas" >&2
+      exit 1
+    fi
+    echo "apply falhou; nova tentativa em 5 s ($attempt/5)"
+    sleep 5
+  done
 
   echo "Aguardando os rollouts"
   for app in "${APPS[@]}"; do
@@ -165,12 +224,12 @@ show_validation() {
 │  Setup local pronto                                          │
 ╰──────────────────────────────────────────────────────────────╯
 
-  API:     http://localhost:31000/health-check
-  Docs:    http://localhost:31000/api-docs
-  Front:   VITE_API_URL=http://localhost:31000 pnpm dev (no 4frames-web-app)
+  API:     http://localhost:8080/api/health-check (pelo Ingress)
+  Docs:    http://localhost:8080/api/api-docs/
+  Front:   VITE_API_URL=http://localhost:8080/api pnpm dev (no 4frames-web-app)
   Mailpit: http://localhost:8025
 
-  # Pods, HPA e ScaledObject
+  # Pods, Ingress, HPA e ScaledObject
   ./scripts/k8s-local.sh status
 
   # Demo de escala: envie vários vídeos e observe o worker
@@ -191,6 +250,8 @@ cmd_up() {
   gateway="$(detect_host_gateway)"
   echo "Host gateway para pods: $gateway"
   build_and_load
+  install_metrics_server
+  install_ingress_nginx
   install_keda
   apply_app "$gateway"
   show_validation
@@ -214,10 +275,10 @@ cmd_logs() {
 
 cmd_status() {
   kubectl config use-context "kind-$CLUSTER_NAME"
-  kubectl -n "$NAMESPACE" get pods,svc,hpa
+  kubectl -n "$NAMESPACE" get pods,svc,ingress,hpa
   kubectl -n "$NAMESPACE" get scaledobjects.keda.sh 2>/dev/null || true
   kubectl -n "$NAMESPACE" top pods 2>/dev/null \
-    || echo '(metrics-server ausente — o HPA fica sem métrica de CPU e só garante o mínimo de réplicas)'
+    || echo '(metrics-server sem dados ainda: a primeira coleta leva perto de um minuto)'
 }
 
 case "${1:-up}" in

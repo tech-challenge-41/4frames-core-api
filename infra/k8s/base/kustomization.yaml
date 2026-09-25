@@ -10,6 +10,7 @@ resources:
   - api-deployment.yaml
   - api-service.yaml
   - api-hpa.yaml
+  - ingress.yaml
   - worker-deployment.yaml
   - worker-service.yaml
   - worker-triggerauthentication.yaml

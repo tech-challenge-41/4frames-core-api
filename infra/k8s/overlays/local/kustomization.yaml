@@ -11,8 +11,6 @@ resources:
 patches:
   # Endereços da infra do Compose vistos de dentro do cluster.
   - path: configmap.yaml
-  # API exposta ao host pela porta do kind-config.yaml, até o Ingress entrar.
-  - path: api-service.yaml
   # O Secret vem do .env (as mesmas credenciais com que o Compose sobe o Postgres), criado pelo script.
   - patch: |-
       $patch: delete
