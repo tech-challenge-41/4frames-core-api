@@ -25,8 +25,8 @@ packages/
       health/     HealthServer: GET /healthz for the worker and notifier liveness probes
       generated/  Prisma Client output (gitignored, created by `pnpm db:generate`)
 infra/localstack/init/             LocalStack bootstrap scripts
-infra/k8s/                         Kustomize: base (api + HPA, worker + KEDA, notifier), overlays local/ci, kind-config.yaml
-scripts/k8s-local.sh               local Kind cluster: Compose infra, images, KEDA, overlay local (up|down|logs|status)
+infra/k8s/                         Kustomize: base (api + HPA, worker + KEDA, notifier, Ingress /api), overlays local/ci, kind-config.yaml
+scripts/k8s-local.sh               local Kind cluster: Compose infra, images, metrics-server, ingress-nginx, KEDA, overlay local
 .github/workflows/                 ci.yml (test→lint→type-check→k8s→build) + cd.yml (release-* → GHCR + Kind smoke)
 docs/adr/                          architecture decisions: ADR-001 (PDF, AWS design) + ADR-002 (local run, monorepo, UUID)
 tsconfig.base.json                 compiler options shared by every package
@@ -389,7 +389,8 @@ ordered by `created_at desc`).
 
 **Infrastructure-level (per ADR-002):**
 
-- The local Kind cluster (`scripts/k8s-local.sh`) has HPA on the API and KEDA on the worker, but no
-  Ingress and no metrics-server yet: the API is exposed on NodePort 31000, and without metrics-server
-  the HPA only keeps its minimum replicas.
+- The local Kind cluster (`scripts/k8s-local.sh`) has the ingress-nginx Ingress (`/api` → API, prefix
+  stripped, on http://localhost:8080), metrics-server for the API HPA and KEDA on the worker. The front
+  still runs outside the cluster (`pnpm dev` against `http://localhost:8080/api`), and migrations still run
+  from Compose (`docker compose run --rm migrate`), not as a Job in the cluster.
 - No Prometheus/Grafana; no metrics exported beyond what's in application logs.
