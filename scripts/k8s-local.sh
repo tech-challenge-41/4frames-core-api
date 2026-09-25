@@ -3,13 +3,14 @@
 # Sobe o 4Frames num cluster Kind local (ADR-002):
 #   - Manifestos: overlay Kustomize infra/k8s/overlays/local (D10)
 #   - Infra (Postgres, Redis, LocalStack, Mailpit) no Compose do host
+#   - Migrations e seed num Job do cluster, antes dos apps
 #   - API com HPA (metrics-server) atrás do Ingress (ingress-nginx) em http://localhost:8080/api
 #   - Worker escalado pelo KEDA pela profundidade da fila SQS
 #
 # Pré-requisitos: docker, kind, kubectl (.env na raiz)
 #
 # Uso:
-#   ./scripts/k8s-local.sh up       # infra, cluster, imagens, KEDA e deploy
+#   ./scripts/k8s-local.sh up       # infra, cluster, imagens, KEDA, migrations e deploy
 #   ./scripts/k8s-local.sh status
 #   ./scripts/k8s-local.sh logs
 #   ./scripts/k8s-local.sh down     # apaga o cluster (a infra do Compose continua de pé)
@@ -26,9 +27,18 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KIND_CONFIG="$ROOT_DIR/infra/k8s/kind-config.yaml"
 OVERLAY_DIR="$ROOT_DIR/infra/k8s/overlays/local"
 # Mesma tag do infra/k8s/base (newTag: local): as imagens são construídas aqui e carregadas no nó.
+# APPS são os Deployments; a imagem migrate é do Job de migrations e seed.
 APPS=(api worker notifier)
+IMAGES=(api worker notifier migrate)
 # Preenchido pelo build: apps cuja imagem mudou e precisam de rollout restart.
 CHANGED_APPS=()
+
+dockerfile_for() {
+  case "$1" in
+    migrate) echo "$ROOT_DIR/packages/shared/Dockerfile" ;;
+    *) echo "$ROOT_DIR/apps/$1/Dockerfile" ;;
+  esac
+}
 
 # No Linux, kind não popula host.docker.internal. Usa o gateway da rede `kind`
 # (alcança portas publicadas no host: Postgres, Redis, LocalStack, Mailpit).
@@ -82,18 +92,9 @@ require_tools() {
 
 up_infra() {
   echo "Subindo infra no Compose (postgres redis mailpit localstack)"
-  docker compose -f "$ROOT_DIR/docker-compose.yml" up -d postgres redis mailpit localstack
-  echo "Migrations + seed"
-  # `up` em vez de `run --rm`: reaproveita o container do migrate e os volumes de node_modules dele. Com
-  # `run --rm`, cada execução reinstalava todas as dependências (de 9 a 40 minutos no Docker Desktop).
-  docker compose -f "$ROOT_DIR/docker-compose.yml" up -d migrate
-  local migrate_exit
-  migrate_exit="$(docker wait "$(docker compose -f "$ROOT_DIR/docker-compose.yml" ps -aq migrate)")"
-  if [[ "$migrate_exit" != "0" ]]; then
-    docker compose -f "$ROOT_DIR/docker-compose.yml" logs --tail=40 migrate >&2
-    echo "Erro: migrations e seed falharam (exit $migrate_exit)" >&2
-    exit 1
-  fi
+  # --wait: o Job de migrations precisa do Postgres saudável, e os apps, do LocalStack com filas e bucket.
+  # As migrations rodam no cluster (Job migrate); o serviço migrate do Compose fica para o desenvolvimento.
+  docker compose -f "$ROOT_DIR/docker-compose.yml" up -d --wait postgres redis mailpit localstack
 
   if [[ -n "$(docker compose -f "$ROOT_DIR/docker-compose.yml" ps -q api worker notifier 2>/dev/null)" ]]; then
     echo "Aviso: api/worker/notifier do Compose estão no ar e disputam a mesma fila com o cluster." >&2
@@ -120,14 +121,15 @@ up_cluster() {
 
 build_and_load() {
   local images=() before after
-  for app in "${APPS[@]}"; do
+  for app in "${IMAGES[@]}"; do
     before="$(docker image inspect -f '{{.Id}}' "4frames-$app:local" 2>/dev/null || true)"
     echo "Buildando 4frames-$app:local"
     # --provenance=false: a atestação de proveniência leva timestamp e mudaria o ID a cada build, mesmo com
     # tudo em cache. Com o ID estável, o `kind load` pula imagens que o nó já tem e só reinicia o que mudou.
-    docker build --provenance=false -t "4frames-$app:local" -f "$ROOT_DIR/apps/$app/Dockerfile" "$ROOT_DIR"
+    docker build --provenance=false -t "4frames-$app:local" -f "$(dockerfile_for "$app")" "$ROOT_DIR"
     after="$(docker image inspect -f '{{.Id}}' "4frames-$app:local")"
-    if [[ "$before" != "$after" ]]; then
+    # O Job migrate é recriado a cada deploy; só os Deployments precisam de restart.
+    if [[ "$before" != "$after" && "$app" != "migrate" ]]; then
       CHANGED_APPS+=("$app")
     fi
     images+=("4frames-$app:local")
@@ -219,6 +221,10 @@ apply_app() {
     --from-literal=AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
     --dry-run=client -o yaml | kubectl apply -f -
 
+  # O spec.template de um Job é imutável: o Job migrate é apagado e recriado a cada deploy. Rodar de novo é
+  # seguro, porque o migrate deploy só aplica o que falta e o seed usa upsert.
+  kubectl -n "$NAMESPACE" delete job migrate --ignore-not-found
+
   echo "Aplicando o overlay local (infra do Compose em $gateway)"
   local manifests
   manifests="$(kubectl kustomize "$OVERLAY_DIR" | sed "s/host\.docker\.internal/${gateway}/g")"
@@ -235,6 +241,13 @@ apply_app() {
     echo "apply falhou; nova tentativa em 5 s ($attempt/5)"
     sleep 5
   done
+
+  echo "Aguardando o Job de migrations e seed"
+  if ! kubectl -n "$NAMESPACE" wait --for=condition=complete job/migrate --timeout=300s; then
+    kubectl -n "$NAMESPACE" logs job/migrate --tail=60 >&2 || true
+    echo "Erro: o Job migrate não terminou (kubectl -n $NAMESPACE describe job migrate)" >&2
+    exit 1
+  fi
 
   # A tag é sempre :local: se o manifesto não mudou, o Deployment não troca de pod sozinho e seguiria com o
   # código antigo. Reinicia só quem teve a imagem reconstruída.
@@ -299,7 +312,7 @@ cmd_down() {
 
 cmd_logs() {
   kubectl config use-context "kind-$CLUSTER_NAME"
-  for app in "${APPS[@]}"; do
+  for app in "${APPS[@]}" migrate; do
     echo "=== $app ==="
     kubectl -n "$NAMESPACE" logs -l "app.kubernetes.io/name=$app" --tail=50 || true
   done
@@ -307,7 +320,7 @@ cmd_logs() {
 
 cmd_status() {
   kubectl config use-context "kind-$CLUSTER_NAME"
-  kubectl -n "$NAMESPACE" get pods,svc,ingress,hpa
+  kubectl -n "$NAMESPACE" get pods,jobs,svc,ingress,hpa
   kubectl -n "$NAMESPACE" get scaledobjects.keda.sh 2>/dev/null || true
   kubectl -n "$NAMESPACE" top pods 2>/dev/null \
     || echo '(metrics-server sem dados ainda: a primeira coleta leva perto de um minuto)'

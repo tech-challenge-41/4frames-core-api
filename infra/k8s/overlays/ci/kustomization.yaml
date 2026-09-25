@@ -5,6 +5,16 @@ resources:
   - ../../base
   - redis.yaml
 
+patches:
+  # O Kind efêmero do CD não tem Postgres: o Job de migrations ficaria falhando. O smoke não usa o banco.
+  - patch: |-
+      $patch: delete
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: migrate
+        namespace: 4frames
+
 # O workflow de CD sobrescreve newName/newTag com `kustomize edit set image`
 # para as imagens acabadas de construir (carregadas no Kind via kind load).
 images:

@@ -16,6 +16,7 @@ resources:
   - worker-triggerauthentication.yaml
   - worker-scaledobject.yaml
   - notifier-deployment.yaml
+  - migrate-job.yaml
 
 images:
   - name: 4frames-api
@@ -26,4 +27,7 @@ images:
     newTag: local
   - name: 4frames-notifier
     newName: 4frames-notifier
+    newTag: local
+  - name: 4frames-migrate
+    newName: 4frames-migrate
     newTag: local
