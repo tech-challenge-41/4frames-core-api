@@ -9,9 +9,10 @@ EKS no ADR-001 (ver ADR-002).
 ```text
 infra/k8s/
   kind-config.yaml   # cluster Kind local: portas 80 e 443 do Ingress publicadas no host em 8080 e 8443
-  base/              # namespace 4frames, ConfigMap, Secret de desenvolvimento, os três Deployments e o Ingress
+  base/              # namespace 4frames, ConfigMap, Secret de desenvolvimento, os três Deployments, o Ingress
+                     # e o Job de migrations
   overlays/local/    # Kind local: infra do Compose no host, Secret gerado do .env
-  overlays/ci/       # Kind efêmero do CD: imagens :ci e um Redis para o notifier
+  overlays/ci/       # Kind efêmero do CD: imagens :ci, um Redis para o notifier e sem o Job (não há Postgres)
 ```
 
 | App      | Arquivos do `base`                                                                                               | Escala                                                      |
@@ -19,6 +20,12 @@ infra/k8s/
 | api      | `api-deployment.yaml`, `api-service.yaml`, `api-hpa.yaml`                                                        | HPA por CPU (70 %), de 2 a 4 réplicas                       |
 | worker   | `worker-deployment.yaml`, `worker-service.yaml`, `worker-scaledobject.yaml`, `worker-triggerauthentication.yaml` | KEDA pela fila SQS, de 1 a 5 réplicas, um vídeo por réplica |
 | notifier | `notifier-deployment.yaml`                                                                                       | 1 réplica (o claim em `notified_at` permite mais)           |
+
+O `migrate-job.yaml` roda `prisma migrate deploy` e o seed com a imagem `4frames-migrate`
+(`packages/shared/Dockerfile`). É uma imagem à parte porque o CLI do Prisma, o `tsx` e o `bcrypt` do seed são
+devDependencies do `@4frames/shared` e não entram nas imagens dos apps. O `spec.template` de um Job é
+imutável, então o Job é recriado a cada deploy. Rodar de novo é seguro: o `migrate deploy` só aplica o que
+falta, e o seed usa `upsert`. Terminado, o Job some sozinho em uma hora.
 
 `api` e `worker` não fixam `replicas`: quem decide são o HPA e o KEDA. Worker e notifier têm liveness e
 readiness em `GET /healthz` na porta 9100; a API, em `GET /health-check`. Os três têm `startupProbe` de até
@@ -45,15 +52,14 @@ Pré-requisitos: Docker, [kind](https://kind.sigs.k8s.io/), `kubectl` e o `.env`
 
 O script, em ordem:
 
-1. Sobe a infra no Compose (`postgres redis mailpit localstack`) e roda migrations e seed com o serviço
-   `migrate`. O container dele é reaproveitado entre execuções, com o `node_modules` já instalado; só a
-   primeira instala as dependências.
+1. Sobe a infra no Compose (`postgres redis mailpit localstack`) e espera ela ficar saudável. As migrations
+   rodam no cluster (passo 9); o serviço `migrate` do Compose fica para o desenvolvimento no Compose.
 2. Cria o cluster `4frames-local` com `infra/k8s/kind-config.yaml`, ou reusa o que já existe.
 3. Detecta o gateway da rede `kind`, que é por onde os pods alcançam as portas publicadas no host. No Linux o
    Kind não resolve `host.docker.internal`. `KIND_HOST_GATEWAY` força outro endereço.
-4. Constrói `4frames-api:local`, `4frames-worker:local` e `4frames-notifier:local` e carrega no nó as que
-   mudaram. Depois do deploy, reinicia só os Deployments cuja imagem mudou: com a tag `:local` fixa, o
-   Deployment não trocaria de pod sozinho e seguiria rodando o código antigo.
+4. Constrói `4frames-api:local`, `4frames-worker:local`, `4frames-notifier:local` e `4frames-migrate:local` e
+   carrega as quatro no nó. Depois do deploy, reinicia só os Deployments cuja imagem mudou: com a tag `:local`
+   fixa, o Deployment não trocaria de pod sozinho e seguiria rodando o código antigo.
 5. Instala o metrics-server (`METRICS_SERVER_VERSION`, padrão `0.9.0`) com `--kubelet-insecure-tls`, que o
    Kind exige porque os certificados do kubelet não são assinados pela CA do cluster, e espera o
    `kubectl top nodes` responder.
@@ -64,7 +70,9 @@ O script, em ordem:
    operator: sem elas, o scaler SQS tenta o IMDS da EC2 e falha.
 8. Gera o Secret `4frames-secret` a partir do `.env`, com as mesmas credenciais com que o Compose sobe o
    Postgres. O overlay local não traz o Secret do `base`, então o deploy não o sobrescreve.
-9. Renderiza `overlays/local`, troca `host.docker.internal` pelo gateway detectado, aplica e espera os rollouts.
+9. Apaga o Job `migrate` anterior, renderiza `overlays/local`, troca `host.docker.internal` pelo gateway
+   detectado e aplica. Espera o Job de migrations e seed terminar, mostrando o log dele se falhar, e depois
+   os rollouts.
 
 Ao reusar um cluster, o script confere se a porta do Ingress está publicada. Um cluster criado antes dela
 no `kind-config.yaml`, ou que voltou de um reinício do Docker Desktop, aborta com a instrução de recriar.
@@ -118,7 +126,8 @@ imagens, instala o KEDA e aplica `overlays/ci`. O overlay acrescenta um Redis de
 notifier só fica pronto com a assinatura de `jobs.events` ativa. Postgres e LocalStack não existem nesse
 cluster: o smoke prova que as imagens sobem e respondem saúde (`/health-check` da API, `/healthz` do worker e
 rollout do notifier), não o fluxo de vídeo. O Ingress do `base` é aplicado, mas o CD não instala o
-ingress-nginx nem o metrics-server: o smoke chega aos Services por `port-forward`.
+ingress-nginx nem o metrics-server: o smoke chega aos Services por `port-forward`. Sem Postgres, o overlay
+`ci` tira o Job de migrations; a imagem `4frames-migrate` é publicada no GHCR com as outras.
 
 ## Deploy de uma tag `release-*` no cluster local
 
@@ -129,11 +138,18 @@ GHCR são privados, `docker login ghcr.io` com um PAT `read:packages`:
 TAG=release-0.1.0
 OWNER=tech-challenge-41
 
-for app in api worker notifier; do
+for app in api worker notifier migrate; do
   docker pull "ghcr.io/${OWNER}/4frames-${app}:${TAG}"
   docker tag "ghcr.io/${OWNER}/4frames-${app}:${TAG}" "4frames-${app}:local"
 done
-kind load docker-image 4frames-api:local 4frames-worker:local 4frames-notifier:local --name 4frames-local
+kind load docker-image 4frames-api:local 4frames-worker:local 4frames-notifier:local 4frames-migrate:local \
+  --name 4frames-local
+
+# Migrations da tag antes dos apps. O manifesto do Job não tem endereço de infra (vem do ConfigMap).
+kubectl -n 4frames delete job migrate --ignore-not-found
+kubectl apply -f infra/k8s/base/migrate-job.yaml
+kubectl -n 4frames wait --for=condition=complete job/migrate --timeout=300s
+
 kubectl -n 4frames rollout restart deploy/api deploy/worker deploy/notifier
 ```
 

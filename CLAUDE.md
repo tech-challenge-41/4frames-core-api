@@ -25,8 +25,8 @@ packages/
       health/     HealthServer: GET /healthz for the worker and notifier liveness probes
       generated/  Prisma Client output (gitignored, created by `pnpm db:generate`)
 infra/localstack/init/             LocalStack bootstrap scripts
-infra/k8s/                         Kustomize: base (api + HPA, worker + KEDA, notifier, Ingress /api), overlays local/ci, kind-config.yaml
-scripts/k8s-local.sh               local Kind cluster: Compose infra, images, metrics-server, ingress-nginx, KEDA, overlay local
+infra/k8s/                         Kustomize: base (api + HPA, worker + KEDA, notifier, Ingress /api, migrate Job), overlays local/ci, kind-config.yaml
+scripts/k8s-local.sh               local Kind cluster: Compose infra, images, metrics-server, ingress-nginx, KEDA, migrate Job, overlay local
 .github/workflows/                 ci.yml (test→lint→type-check→k8s→build) + cd.yml (release-* → GHCR + Kind smoke)
 docs/adr/                          architecture decisions: ADR-001 (PDF, AWS design) + ADR-002 (local run, monorepo, UUID)
 tsconfig.base.json                 compiler options shared by every package
@@ -332,6 +332,10 @@ storage/ zip/ repo/ progress/ S3 (lib-storage), archiver, Prisma, Redis publishe
 - `apps/worker/Dockerfile` (production) installs `ffmpeg`, runs `node dist/main.js` as `node` and exposes 9100.
 - `apps/notifier/Dockerfile` (production) runs `node dist/main.js` as `node` and exposes 9100 (`/healthz`, used by
   the `httpGet` probes in `infra/k8s/base/notifier-deployment.yaml`).
+- `packages/shared/Dockerfile` builds `4frames-migrate`, the image of the `migrate` Job in the cluster
+  (`prisma migrate deploy` + seed). It keeps the shared devDependencies (Prisma CLI, `tsx`, `bcrypt`) and the
+  TypeScript sources that `prisma.config.ts` and the seed import, which the app images leave out. The Prisma
+  schema engine is installed at build time (`pnpm rebuild`), so the Job never downloads it.
 
 ## Commands (run at the repo root)
 
@@ -392,7 +396,7 @@ ordered by `created_at desc`).
 **Infrastructure-level (per ADR-002):**
 
 - The local Kind cluster (`scripts/k8s-local.sh`) has the ingress-nginx Ingress (`/api` → API, prefix
-  stripped, on http://localhost:8080), metrics-server for the API HPA and KEDA on the worker. The front
-  still runs outside the cluster (`pnpm dev` against `http://localhost:8080/api`), and migrations still run
-  from Compose (`docker compose run --rm migrate`), not as a Job in the cluster.
+  stripped, on http://localhost:8080), metrics-server for the API HPA, KEDA on the worker and migrations +
+  seed as the `migrate` Job. The front still runs outside the cluster (`pnpm dev` against
+  `http://localhost:8080/api`).
 - No Prometheus/Grafana; no metrics exported beyond what's in application logs.

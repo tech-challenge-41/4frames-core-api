@@ -80,8 +80,9 @@ continua no Compose, fora do cluster.
 ./scripts/k8s-local.sh up
 ```
 
-O script sobe a infra no Compose e roda migrations e seed, cria o cluster, constrói e carrega as três
-imagens, instala o metrics-server, o ingress-nginx e o KEDA e aplica o overlay `infra/k8s/overlays/local`.
+O script sobe a infra no Compose, cria o cluster, constrói e carrega as imagens, instala o metrics-server, o
+ingress-nginx e o KEDA e aplica o overlay `infra/k8s/overlays/local`. As migrations e o seed rodam num Job do
+cluster, antes dos apps.
 Pare antes `api`, `worker` e `notifier` do Compose, que disputariam a mesma fila:
 `docker compose stop api worker notifier`.
 
@@ -163,6 +164,7 @@ As imagens de produção são construídas a partir da raiz do monorepo:
 docker build -f apps/api/Dockerfile -t 4frames-api .
 docker build -f apps/worker/Dockerfile -t 4frames-worker .
 docker build -f apps/notifier/Dockerfile -t 4frames-notifier .
+docker build -f packages/shared/Dockerfile -t 4frames-migrate .   # migrations e seed (Job do cluster)
 ```
 
 A imagem do worker instala `ffmpeg` (como o projeto base), roda como usuário `node` e expõe a porta `9100`
@@ -208,8 +210,8 @@ recebe `400`.
 5. Quando `DONE`, `GET /videos/{jobId}/download` devolve uma URL pré-assinada de `GET` para o `.zip`.
 
 O processamento em si é feito pelo worker (ver [Worker](#worker)), e o `apps/notifier` manda o e-mail em
-`job.done`/`job.failed`. Ainda faltam, do ADR-002, o front e as migrations dentro do cluster e a
-observabilidade — ver "Known gaps" no [CLAUDE.md](./CLAUDE.md).
+`job.done`/`job.failed`. Ainda faltam, do ADR-002, o front dentro do cluster e a observabilidade — ver
+"Known gaps" no [CLAUDE.md](./CLAUDE.md).
 
 ## Worker
 
