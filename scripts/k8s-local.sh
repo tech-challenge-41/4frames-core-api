@@ -27,6 +27,8 @@ KIND_CONFIG="$ROOT_DIR/infra/k8s/kind-config.yaml"
 OVERLAY_DIR="$ROOT_DIR/infra/k8s/overlays/local"
 # Mesma tag do infra/k8s/base (newTag: local): as imagens são construídas aqui e carregadas no nó.
 APPS=(api worker notifier)
+# Preenchido pelo build: apps cuja imagem mudou e precisam de rollout restart.
+CHANGED_APPS=()
 
 # No Linux, kind não popula host.docker.internal. Usa o gateway da rede `kind`
 # (alcança portas publicadas no host: Postgres, Redis, LocalStack, Mailpit).
@@ -82,7 +84,16 @@ up_infra() {
   echo "Subindo infra no Compose (postgres redis mailpit localstack)"
   docker compose -f "$ROOT_DIR/docker-compose.yml" up -d postgres redis mailpit localstack
   echo "Migrations + seed"
-  docker compose -f "$ROOT_DIR/docker-compose.yml" run --rm migrate
+  # `up` em vez de `run --rm`: reaproveita o container do migrate e os volumes de node_modules dele. Com
+  # `run --rm`, cada execução reinstalava todas as dependências (de 9 a 40 minutos no Docker Desktop).
+  docker compose -f "$ROOT_DIR/docker-compose.yml" up -d migrate
+  local migrate_exit
+  migrate_exit="$(docker wait "$(docker compose -f "$ROOT_DIR/docker-compose.yml" ps -aq migrate)")"
+  if [[ "$migrate_exit" != "0" ]]; then
+    docker compose -f "$ROOT_DIR/docker-compose.yml" logs --tail=40 migrate >&2
+    echo "Erro: migrations e seed falharam (exit $migrate_exit)" >&2
+    exit 1
+  fi
 
   if [[ -n "$(docker compose -f "$ROOT_DIR/docker-compose.yml" ps -q api worker notifier 2>/dev/null)" ]]; then
     echo "Aviso: api/worker/notifier do Compose estão no ar e disputam a mesma fila com o cluster." >&2
@@ -108,10 +119,17 @@ up_cluster() {
 }
 
 build_and_load() {
-  local images=()
+  local images=() before after
   for app in "${APPS[@]}"; do
+    before="$(docker image inspect -f '{{.Id}}' "4frames-$app:local" 2>/dev/null || true)"
     echo "Buildando 4frames-$app:local"
-    docker build -t "4frames-$app:local" -f "$ROOT_DIR/apps/$app/Dockerfile" "$ROOT_DIR"
+    # --provenance=false: a atestação de proveniência leva timestamp e mudaria o ID a cada build, mesmo com
+    # tudo em cache. Com o ID estável, o `kind load` pula imagens que o nó já tem e só reinicia o que mudou.
+    docker build --provenance=false -t "4frames-$app:local" -f "$ROOT_DIR/apps/$app/Dockerfile" "$ROOT_DIR"
+    after="$(docker image inspect -f '{{.Id}}' "4frames-$app:local")"
+    if [[ "$before" != "$after" ]]; then
+      CHANGED_APPS+=("$app")
+    fi
     images+=("4frames-$app:local")
   done
   echo "Carregando imagens no Kind"
@@ -148,6 +166,13 @@ install_ingress_nginx() {
   echo "Instalando ingress-nginx controller-v${INGRESS_NGINX_VERSION}"
   # Manifesto para kind: o controller escuta nas portas 80 e 443 do nó, publicadas pelo kind-config.yaml.
   kubectl apply -f "https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v${INGRESS_NGINX_VERSION}/deploy/static/provider/kind/deploy.yaml"
+
+  # O SSE leva o JWT em ?token= (o EventSource não envia header): o log de acesso grava o caminho sem a query
+  # string. É o formato padrão do ingress-nginx com "$request" trocado por método, $uri e protocolo.
+  kubectl -n ingress-nginx patch configmap ingress-nginx-controller --type merge -p "$(cat <<'JSON'
+{"data":{"log-format-upstream":"$remote_addr - $remote_user [$time_local] \"$request_method $uri $server_protocol\" $status $body_bytes_sent \"$http_referer\" \"$http_user_agent\" $request_length $request_time [$proxy_upstream_name] [$proxy_alternative_upstream_name] $upstream_addr $upstream_response_length $upstream_response_time $upstream_status $req_id"}}
+JSON
+)"
   kubectl -n ingress-nginx rollout status deployment/ingress-nginx-controller --timeout=180s
 }
 
@@ -209,6 +234,13 @@ apply_app() {
     fi
     echo "apply falhou; nova tentativa em 5 s ($attempt/5)"
     sleep 5
+  done
+
+  # A tag é sempre :local: se o manifesto não mudou, o Deployment não troca de pod sozinho e seguiria com o
+  # código antigo. Reinicia só quem teve a imagem reconstruída.
+  for app in ${CHANGED_APPS[@]+"${CHANGED_APPS[@]}"}; do
+    echo "Imagem de $app mudou: reiniciando o Deployment"
+    kubectl -n "$NAMESPACE" rollout restart "deployment/$app"
   done
 
   echo "Aguardando os rollouts"
