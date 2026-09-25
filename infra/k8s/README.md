@@ -21,12 +21,19 @@ infra/k8s/
 | notifier | `notifier-deployment.yaml`                                                                                       | 1 réplica (o claim em `notified_at` permite mais)           |
 
 `api` e `worker` não fixam `replicas`: quem decide são o HPA e o KEDA. Worker e notifier têm liveness e
-readiness em `GET /healthz` na porta 9100; a API, em `GET /health-check`.
+readiness em `GET /healthz` na porta 9100; a API, em `GET /health-check`. Os três têm `startupProbe` de até
+150 s: liveness e readiness só começam depois da primeira resposta, então uma réplica nova que demora a subir
+num host carregado não é reiniciada antes de ficar pronta.
 
 O `ingress.yaml` leva `/api/*` à API sem o prefixo (`/api/videos` → `/videos`), com o Service da API em
 ClusterIP. O SSE de progresso (`GET /videos/:jobId/events`) atravessa o ingress-nginx com
 `proxy-buffering: off`, que entrega cada evento na hora, e `proxy-read-timeout`/`proxy-send-timeout` de
-3600 s. O front entra por `/` quando rodar no cluster.
+3600 s. A API não sabe do prefixo, então os redirecionamentos dela são relativos: `/api/api-docs` leva a
+`/api/api-docs/`. O front entra por `/` quando rodar no cluster.
+
+O SSE leva o JWT em `?token=`, porque o `EventSource` não envia header. Para ele não parar em log, o log de
+acesso do ingress-nginx grava o caminho sem a query string, e a API mascara `?token=` e o header
+`Authorization`. O log de erro do nginx ainda grava a requisição inteira quando a chamada à API falha.
 
 ## Cluster local (Kind)
 
@@ -38,16 +45,21 @@ Pré-requisitos: Docker, [kind](https://kind.sigs.k8s.io/), `kubectl` e o `.env`
 
 O script, em ordem:
 
-1. Sobe a infra no Compose (`postgres redis mailpit localstack`) e roda migrations e seed.
+1. Sobe a infra no Compose (`postgres redis mailpit localstack`) e roda migrations e seed com o serviço
+   `migrate`. O container dele é reaproveitado entre execuções, com o `node_modules` já instalado; só a
+   primeira instala as dependências.
 2. Cria o cluster `4frames-local` com `infra/k8s/kind-config.yaml`, ou reusa o que já existe.
 3. Detecta o gateway da rede `kind`, que é por onde os pods alcançam as portas publicadas no host. No Linux o
    Kind não resolve `host.docker.internal`. `KIND_HOST_GATEWAY` força outro endereço.
-4. Constrói `4frames-api:local`, `4frames-worker:local` e `4frames-notifier:local` e carrega as três no nó.
+4. Constrói `4frames-api:local`, `4frames-worker:local` e `4frames-notifier:local` e carrega no nó as que
+   mudaram. Depois do deploy, reinicia só os Deployments cuja imagem mudou: com a tag `:local` fixa, o
+   Deployment não trocaria de pod sozinho e seguiria rodando o código antigo.
 5. Instala o metrics-server (`METRICS_SERVER_VERSION`, padrão `0.9.0`) com `--kubelet-insecure-tls`, que o
    Kind exige porque os certificados do kubelet não são assinados pela CA do cluster, e espera o
    `kubectl top nodes` responder.
-6. Instala o ingress-nginx para Kind (`INGRESS_NGINX_VERSION`, padrão `1.15.1`). O projeto foi arquivado e
-   esta é a última versão publicada: serve ao cluster local, mas não recebe mais correções de segurança.
+6. Instala o ingress-nginx para Kind (`INGRESS_NGINX_VERSION`, padrão `1.15.1`), com o log de acesso sem
+   query string. O projeto foi arquivado e esta é a última versão publicada: serve ao cluster local, mas não
+   recebe mais correções de segurança.
 7. Instala o KEDA com versão fixada (`KEDA_VERSION`, padrão `2.16.1`) e grava as credenciais do LocalStack no
    operator: sem elas, o scaler SQS tenta o IMDS da EC2 e falha.
 8. Gera o Secret `4frames-secret` a partir do `.env`, com as mesmas credenciais com que o Compose sobe o
