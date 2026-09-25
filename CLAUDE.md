@@ -226,7 +226,9 @@ producer, only a subscriber.
   token via `?token=` as a fallback, restricted to this one route — an
   `Authorization` header is still tried first (for curl/tests). A token in a query
   string can leak into access logs and proxies; don't reuse this middleware
-  elsewhere.
+  elsewhere. The API access log (`infra/logging/pino/http-request-logger.middleware.ts`)
+  masks `?token=` and the `Authorization`/`Cookie` headers, and the local ingress-nginx
+  logs the path without the query string. Keep both if you touch request logging.
 - The stream ends itself on a terminal event (`job.done`/`job.failed`); a 15s
   heartbeat comment (`: heartbeat\n\n`) keeps proxies from closing an idle
   connection meanwhile.
