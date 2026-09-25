@@ -29,6 +29,16 @@ export async function HTTPInitialize() {
 
   app.use(express.json());
   app.use(httpRoutes);
+  // O swagger-ui redireciona /api-docs para /api-docs/ com caminho absoluto, que perde o /api do Ingress.
+  // O relativo (api-docs/) funciona atrás do Ingress e direto na porta 3000.
+  app.get('/api-docs', (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (req.path.endsWith('/')) {
+      next();
+      return;
+    }
+
+    res.redirect(301, 'api-docs/');
+  });
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openapi));
   app.get('/health-check', (req: express.Request, res: express.Response) => {
     res.status(200).json({ message: 'Server is running' });
