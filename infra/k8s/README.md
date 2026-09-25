@@ -64,6 +64,9 @@ kubectl -n 4frames get pods -l app.kubernetes.io/name=worker -w   # KEDA subindo
   vale para pods novos.
 - O script ainda não instala o metrics-server. Sem ele o HPA fica sem métrica de CPU e só garante o mínimo de
   réplicas.
+- Depois de reiniciar a máquina ou o Docker Desktop, o nó do Kind volta sem as portas publicadas (a API do
+  Kubernetes e a 31000 recusam conexão), e nem `docker restart` resolve. Recrie o cluster com
+  `./scripts/k8s-local.sh down` e `up`; as imagens ficam em cache.
 - O build e o `kind load` ocupam bastante disco. Se o `kind load` falhar com _no space left_, rode
   `docker system prune -af` (remove imagens não usadas) e tente de novo.
 
