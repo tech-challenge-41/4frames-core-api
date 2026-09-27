@@ -23,6 +23,17 @@ patches:
       metadata:
         name: web
         namespace: 4frames
+  # Sem Postgres, o GET /ready responde 503 e a API nunca ficaria pronta: o rollout do CD falharia. Aqui a
+  # readiness volta a ser o /health-check, que só diz que o processo está de pé, como o smoke precisa.
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: api
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/readinessProbe/httpGet/path
+        value: /health-check
 
 # O workflow de CD sobrescreve newName/newTag com `kustomize edit set image`
 # para as imagens acabadas de construir (carregadas no Kind via kind load).
