@@ -25,8 +25,8 @@ packages/
       health/     HealthServer: GET /healthz for the worker and notifier liveness probes
       generated/  Prisma Client output (gitignored, created by `pnpm db:generate`)
 infra/localstack/init/             LocalStack bootstrap scripts
-infra/k8s/                         Kustomize: base (api + HPA, worker + KEDA, notifier, Ingress /api, migrate Job), overlays local/ci, kind-config.yaml
-scripts/k8s-local.sh               local Kind cluster: Compose infra, images, metrics-server, ingress-nginx, KEDA, migrate Job, overlay local
+infra/k8s/                         Kustomize: base (api + HPA, worker + KEDA, notifier, web, Ingress /api and /, migrate Job), overlays local/ci, kind-config.yaml
+scripts/k8s-local.sh               local Kind cluster: Compose infra, images (web from ../4frames-web-app), metrics-server, ingress-nginx, KEDA, migrate Job, overlay local
 .github/workflows/                 ci.yml (test→lint→type-check→k8s→build) + cd.yml (release-* → GHCR + Kind smoke)
 docs/adr/                          architecture decisions: ADR-001 (PDF, AWS design) + ADR-002 (local run, monorepo, UUID)
 tsconfig.base.json                 compiler options shared by every package
@@ -395,8 +395,9 @@ ordered by `created_at desc`).
 
 **Infrastructure-level (per ADR-002):**
 
-- The local Kind cluster (`scripts/k8s-local.sh`) has the ingress-nginx Ingress (`/api` → API, prefix
-  stripped, on http://localhost:8080), metrics-server for the API HPA, KEDA on the worker and migrations +
-  seed as the `migrate` Job. The front still runs outside the cluster (`pnpm dev` against
-  `http://localhost:8080/api`).
+- The local Kind cluster (`scripts/k8s-local.sh`) serves the front and the API through ingress-nginx on
+  http://localhost:8080 (`/` → the `web` nginx image built from the sibling `4frames-web-app` clone,
+  `/api` → API with the prefix stripped, in a separate Ingress because of its `rewrite-target`), with
+  metrics-server for the API HPA, KEDA on the worker and migrations + seed as the `migrate` Job. The CD
+  Kind (`overlays/ci`) drops the `web` Deployment: that image belongs to the web-app repo.
 - No Prometheus/Grafana; no metrics exported beyond what's in application logs.

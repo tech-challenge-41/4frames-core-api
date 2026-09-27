@@ -9,10 +9,11 @@ EKS no ADR-001 (ver ADR-002).
 ```text
 infra/k8s/
   kind-config.yaml   # cluster Kind local: portas 80 e 443 do Ingress publicadas no host em 8080 e 8443
-  base/              # namespace 4frames, ConfigMap, Secret de desenvolvimento, os três Deployments, o Ingress
-                     # e o Job de migrations
+  base/              # namespace 4frames, ConfigMap, Secret de desenvolvimento, os Deployments de api, worker,
+                     # notifier e front, os dois Ingress e o Job de migrations
   overlays/local/    # Kind local: infra do Compose no host, Secret gerado do .env
-  overlays/ci/       # Kind efêmero do CD: imagens :ci, um Redis para o notifier e sem o Job (não há Postgres)
+  overlays/ci/       # Kind efêmero do CD: imagens :ci, um Redis para o notifier, sem o Job (não há Postgres) e
+                     # sem o front (a imagem é do 4frames-web-app)
 ```
 
 | App      | Arquivos do `base`                                                                                               | Escala                                                      |
@@ -20,6 +21,7 @@ infra/k8s/
 | api      | `api-deployment.yaml`, `api-service.yaml`, `api-hpa.yaml`                                                        | HPA por CPU (70 %), de 2 a 4 réplicas                       |
 | worker   | `worker-deployment.yaml`, `worker-service.yaml`, `worker-scaledobject.yaml`, `worker-triggerauthentication.yaml` | KEDA pela fila SQS, de 1 a 5 réplicas, um vídeo por réplica |
 | notifier | `notifier-deployment.yaml`                                                                                       | 1 réplica (o claim em `notified_at` permite mais)           |
+| web      | `web-deployment.yaml`, `web-service.yaml`, `web-ingress.yaml`                                                    | 1 réplica (arquivos estáticos)                              |
 
 O `migrate-job.yaml` roda `prisma migrate deploy` e o seed com a imagem `4frames-migrate`
 (`packages/shared/Dockerfile`). É uma imagem à parte porque o CLI do Prisma, o `tsx` e o `bcrypt` do seed são
@@ -30,13 +32,22 @@ falta, e o seed usa `upsert`. Terminado, o Job some sozinho em uma hora.
 `api` e `worker` não fixam `replicas`: quem decide são o HPA e o KEDA. Worker e notifier têm liveness e
 readiness em `GET /healthz` na porta 9100; a API, em `GET /health-check`. Os três têm `startupProbe` de até
 150 s: liveness e readiness só começam depois da primeira resposta, então uma réplica nova que demora a subir
-num host carregado não é reiniciada antes de ficar pronta.
+num host carregado não é reiniciada antes de ficar pronta. O front (`web`) é o build do Vite servido por nginx
+sem root na porta 8080, com liveness e readiness em `GET /healthz` e sem `startupProbe`, porque o nginx sobe
+em milissegundos.
 
 O `ingress.yaml` leva `/api/*` à API sem o prefixo (`/api/videos` → `/videos`), com o Service da API em
 ClusterIP. O SSE de progresso (`GET /videos/:jobId/events`) atravessa o ingress-nginx com
 `proxy-buffering: off`, que entrega cada evento na hora, e `proxy-read-timeout`/`proxy-send-timeout` de
 3600 s. A API não sabe do prefixo, então os redirecionamentos dela são relativos: `/api/api-docs` leva a
-`/api/api-docs/`. O front entra por `/` quando rodar no cluster.
+`/api/api-docs/`.
+
+O `web-ingress.yaml` leva o resto (`/`) ao front, cujo nginx devolve o `index.html` às rotas da SPA. A
+imagem do front chama a API em `/api`, um caminho relativo, então front e API ficam na mesma origem e o
+navegador não faz CORS. São dois Ingress porque o `rewrite-target` do Ingress da API vale para todos os
+paths dele, e o caminho do front precisa chegar inteiro. Já o `use-regex` vale para o host todo, e o `/` do
+front também vira regex. Não há conflito: o ingress-nginx testa os paths do mais longo para o mais curto, e o
+`/api(/|$)(.*)` vem antes.
 
 O SSE leva o JWT em `?token=`, porque o `EventSource` não envia header. Para ele não parar em log, o log de
 acesso do ingress-nginx grava o caminho sem a query string, e a API mascara `?token=` e o header
@@ -44,7 +55,9 @@ acesso do ingress-nginx grava o caminho sem a query string, e a API mascara `?to
 
 ## Cluster local (Kind)
 
-Pré-requisitos: Docker, [kind](https://kind.sigs.k8s.io/), `kubectl` e o `.env` na raiz (`cp .env.example .env`).
+Pré-requisitos: Docker, [kind](https://kind.sigs.k8s.io/), `kubectl`, o `.env` na raiz (`cp .env.example .env`) e
+o [`4frames-web-app`](https://github.com/tech-challenge-41/4frames-web-app) clonado ao lado deste repositório,
+de onde sai a imagem do front. `WEB_APP_DIR` aponta para um clone em outro lugar.
 
 ```bash
 ./scripts/k8s-local.sh up
@@ -57,9 +70,11 @@ O script, em ordem:
 2. Cria o cluster `4frames-local` com `infra/k8s/kind-config.yaml`, ou reusa o que já existe.
 3. Detecta o gateway da rede `kind`, que é por onde os pods alcançam as portas publicadas no host. No Linux o
    Kind não resolve `host.docker.internal`. `KIND_HOST_GATEWAY` força outro endereço.
-4. Constrói `4frames-api:local`, `4frames-worker:local`, `4frames-notifier:local` e `4frames-migrate:local` e
-   carrega as quatro no nó. Depois do deploy, reinicia só os Deployments cuja imagem mudou: com a tag `:local`
-   fixa, o Deployment não trocaria de pod sozinho e seguiria rodando o código antigo.
+4. Constrói `4frames-api:local`, `4frames-worker:local`, `4frames-notifier:local` e `4frames-migrate:local` a
+   partir da raiz deste repositório, e `4frames-web:local` a partir do clone do `4frames-web-app`, e carrega as
+   cinco no nó. Sem o clone, o `up` para antes de subir qualquer coisa. Depois do deploy, reinicia só os
+   Deployments cuja imagem mudou: com a tag `:local` fixa, o Deployment não trocaria de pod sozinho e seguiria
+   rodando o código antigo.
 5. Instala o metrics-server (`METRICS_SERVER_VERSION`, padrão `0.9.0`) com `--kubelet-insecure-tls`, que o
    Kind exige porque os certificados do kubelet não são assinados pela CA do cluster, e espera o
    `kubectl top nodes` responder.
@@ -71,21 +86,23 @@ O script, em ordem:
 8. Gera o Secret `4frames-secret` a partir do `.env`, com as mesmas credenciais com que o Compose sobe o
    Postgres. O overlay local não traz o Secret do `base`, então o deploy não o sobrescreve.
 9. Apaga o Job `migrate` anterior, renderiza `overlays/local`, troca `host.docker.internal` pelo gateway
-   detectado e aplica. Espera o Job de migrations e seed terminar, mostrando o log dele se falhar, e depois
-   os rollouts.
+   detectado e aplica. Espera o Job de migrations e seed terminar, mostrando o log dele se falhar. Se o apply
+   alterou o ConfigMap ou o Secret, reinicia `api`, `worker` e `notifier`, que leem os dois por `envFrom` e só
+   veem valores novos em pods novos. Depois espera os rollouts.
 
 Ao reusar um cluster, o script confere se a porta do Ingress está publicada. Um cluster criado antes dela
 no `kind-config.yaml`, ou que voltou de um reinício do Docker Desktop, aborta com a instrução de recriar.
 
-| O quê   | Onde                                                                                            |
-| ------- | ----------------------------------------------------------------------------------------------- |
-| API     | http://localhost:8080/api/health-check e http://localhost:8080/api/api-docs/ (pelo Ingress)     |
-| Front   | No `4frames-web-app`: `VITE_API_URL=http://localhost:8080/api pnpm dev` → http://localhost:5173 |
-| E-mails | Mailpit do Compose, http://localhost:8025                                                       |
+| O quê        | Onde                                                                                            |
+| ------------ | ----------------------------------------------------------------------------------------------- |
+| Front        | http://localhost:8080 (pelo Ingress), com o usuário do seed `admin@admin.com` / `123456`        |
+| API          | http://localhost:8080/api/health-check e http://localhost:8080/api/api-docs/ (pelo Ingress)     |
+| Front em dev | No `4frames-web-app`: `VITE_API_URL=http://localhost:8080/api pnpm dev` → http://localhost:5173 |
+| E-mails      | Mailpit do Compose, http://localhost:8025                                                       |
 
 ```bash
 ./scripts/k8s-local.sh status                                  # pods, services, Ingress, HPA e ScaledObject
-./scripts/k8s-local.sh logs                                    # últimas linhas de api, worker e notifier
+./scripts/k8s-local.sh logs                                    # últimas linhas dos apps, do front e do migrate
 kubectl -n 4frames get pods -l app.kubernetes.io/name=worker -w   # KEDA subindo workers com a fila cheia
 ./scripts/k8s-local.sh down                                    # apaga o cluster; a infra do Compose continua
 ```
@@ -93,8 +110,8 @@ kubectl -n 4frames get pods -l app.kubernetes.io/name=worker -w   # KEDA subindo
 - Não deixe `api`, `worker` e `notifier` do Compose no ar junto com o cluster: disputam a mesma fila. O script
   avisa; pare-os com `docker compose stop api worker notifier`.
 - `S3_PUBLIC_ENDPOINT_URL` continua `http://localhost:4566`: quem abre a URL assinada é o navegador.
-- Depois de mudar o `.env`, rode `up` de novo e `kubectl -n 4frames rollout restart deploy`: o Secret novo só
-  vale para pods novos.
+- Depois de mudar o `.env` ou o ConfigMap de um overlay, rode `up` de novo: ele reinicia os apps quando o Secret
+  ou o ConfigMap mudam.
 - A primeira coleta do metrics-server leva perto de um minuto; até lá o HPA mostra `<unknown>` e mantém o
   mínimo de réplicas.
 - Depois de reiniciar a máquina ou o Docker Desktop, o nó do Kind volta sem as portas publicadas (a API do
@@ -127,7 +144,9 @@ notifier só fica pronto com a assinatura de `jobs.events` ativa. Postgres e Loc
 cluster: o smoke prova que as imagens sobem e respondem saúde (`/health-check` da API, `/healthz` do worker e
 rollout do notifier), não o fluxo de vídeo. O Ingress do `base` é aplicado, mas o CD não instala o
 ingress-nginx nem o metrics-server: o smoke chega aos Services por `port-forward`. Sem Postgres, o overlay
-`ci` tira o Job de migrations; a imagem `4frames-migrate` é publicada no GHCR com as outras.
+`ci` tira o Job de migrations; a imagem `4frames-migrate` é publicada no GHCR com as outras. O overlay também
+tira o Deployment do front: a imagem `4frames-web` vem do `4frames-web-app`, e este CD não a constrói. Sem ele,
+o pod ficaria em `ErrImagePull`. O Service `web` fica sem endpoints, o que não afeta o smoke.
 
 ## Deploy de uma tag `release-*` no cluster local
 
@@ -152,6 +171,9 @@ kubectl -n 4frames wait --for=condition=complete job/migrate --timeout=300s
 
 kubectl -n 4frames rollout restart deploy/api deploy/worker deploy/notifier
 ```
+
+O front fica de fora: a imagem `4frames-web` é do `4frames-web-app` e ainda não é publicada no GHCR. O `up` a
+constrói a partir do clone.
 
 O `base/secret.yaml` tem valores de desenvolvimento (iguais ao `.env.example`), usados só pelo overlay `ci`.
 Não use em produção.

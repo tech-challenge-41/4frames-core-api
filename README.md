@@ -72,9 +72,13 @@ pnpm dev:api
 
 ### Cluster Kubernetes local (Kind)
 
-É onde a stack roda e escala como no ADR-002: API com HPA atrás do Ingress, worker escalado pelo KEDA pela
-profundidade da fila SQS (um vídeo por réplica) e notifier. A infra (Postgres, Redis, LocalStack e Mailpit)
-continua no Compose, fora do cluster.
+É onde a stack roda e escala como no ADR-002: front e API atrás do Ingress, API com HPA, worker escalado pelo
+KEDA pela profundidade da fila SQS (um vídeo por réplica) e notifier. A infra (Postgres, Redis, LocalStack e
+Mailpit) continua no Compose, fora do cluster.
+
+A imagem do front é construída a partir do
+[`4frames-web-app`](https://github.com/tech-challenge-41/4frames-web-app), que precisa estar clonado ao lado
+deste repositório (ou em `WEB_APP_DIR`).
 
 ```bash
 ./scripts/k8s-local.sh up
@@ -88,9 +92,10 @@ Pare antes `api`, `worker` e `notifier` do Compose, que disputariam a mesma fila
 
 | O quê       | Como                                                                                            |
 | ----------- | ----------------------------------------------------------------------------------------------- |
+| Front       | http://localhost:8080 (pelo Ingress)                                                            |
 | API         | http://localhost:8080/api/health-check e http://localhost:8080/api/api-docs/ (pelo Ingress)     |
-| Login       | `POST /api/auth` com `admin@admin.com` / `123456` (seed)                                        |
-| Front       | No `4frames-web-app`: `VITE_API_URL=http://localhost:8080/api pnpm dev` → http://localhost:5173 |
+| Login       | `admin@admin.com` / `123456` (seed), pelo front ou em `POST /api/auth`                          |
+| Front (dev) | No `4frames-web-app`: `VITE_API_URL=http://localhost:8080/api pnpm dev` → http://localhost:5173 |
 | Escala      | `kubectl -n 4frames get pods -l app.kubernetes.io/name=worker -w` enquanto enfileira vídeos     |
 | Status/logs | `./scripts/k8s-local.sh status` / `./scripts/k8s-local.sh logs`                                 |
 | Desligar    | `./scripts/k8s-local.sh down` (apaga o cluster; a infra do Compose continua)                    |
@@ -210,7 +215,7 @@ recebe `400`.
 5. Quando `DONE`, `GET /videos/{jobId}/download` devolve uma URL pré-assinada de `GET` para o `.zip`.
 
 O processamento em si é feito pelo worker (ver [Worker](#worker)), e o `apps/notifier` manda o e-mail em
-`job.done`/`job.failed`. Ainda faltam, do ADR-002, o front dentro do cluster e a observabilidade — ver
+`job.done`/`job.failed`. Ainda falta, do ADR-002, a observabilidade — ver
 "Known gaps" no [CLAUDE.md](./CLAUDE.md).
 
 ## Worker
