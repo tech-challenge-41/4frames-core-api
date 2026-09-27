@@ -4,10 +4,11 @@
 #   - Manifestos: overlay Kustomize infra/k8s/overlays/local (D10)
 #   - Infra (Postgres, Redis, LocalStack, Mailpit) no Compose do host
 #   - Migrations e seed num Job do cluster, antes dos apps
-#   - API com HPA (metrics-server) atrás do Ingress (ingress-nginx) em http://localhost:8080/api
+#   - Front em http://localhost:8080 e API com HPA (metrics-server) em /api, atrás do Ingress (ingress-nginx)
 #   - Worker escalado pelo KEDA pela profundidade da fila SQS
 #
-# Pré-requisitos: docker, kind, kubectl (.env na raiz)
+# Pré-requisitos: docker, kind, kubectl (.env na raiz) e o 4frames-web-app clonado ao lado deste repositório
+# (WEB_APP_DIR aponta para outro lugar)
 #
 # Uso:
 #   ./scripts/k8s-local.sh up       # infra, cluster, imagens, KEDA, migrations e deploy
@@ -26,17 +27,32 @@ NAMESPACE="4frames"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KIND_CONFIG="$ROOT_DIR/infra/k8s/kind-config.yaml"
 OVERLAY_DIR="$ROOT_DIR/infra/k8s/overlays/local"
+# O front mora em outro repositório: a imagem web é construída a partir do clone dele.
+WEB_APP_DIR="${WEB_APP_DIR:-$ROOT_DIR/../4frames-web-app}"
 # Mesma tag do infra/k8s/base (newTag: local): as imagens são construídas aqui e carregadas no nó.
 # APPS são os Deployments; a imagem migrate é do Job de migrations e seed.
-APPS=(api worker notifier)
-IMAGES=(api worker notifier migrate)
+APPS=(api worker notifier web)
+IMAGES=(api worker notifier web migrate)
+# Deployments que leem o ConfigMap e o Secret por envFrom. As variáveis só valem para pods novos.
+CONFIG_APPS=(api worker notifier)
 # Preenchido pelo build: apps cuja imagem mudou e precisam de rollout restart.
 CHANGED_APPS=()
+# Preenchido pelo deploy: 1 quando o apply alterou o ConfigMap ou o Secret.
+CONFIG_CHANGED=0
 
 dockerfile_for() {
   case "$1" in
     migrate) echo "$ROOT_DIR/packages/shared/Dockerfile" ;;
+    web) echo "$WEB_APP_DIR/Dockerfile" ;;
     *) echo "$ROOT_DIR/apps/$1/Dockerfile" ;;
+  esac
+}
+
+# As imagens do monorepo usam a raiz como contexto; a do front, a raiz do 4frames-web-app.
+context_for() {
+  case "$1" in
+    web) echo "$WEB_APP_DIR" ;;
+    *) echo "$ROOT_DIR" ;;
   esac
 }
 
@@ -90,6 +106,17 @@ require_tools() {
   done
 }
 
+# Sem o clone do front, o Deployment web ficaria sem imagem e o up só falharia no fim, no rollout.
+require_web_app() {
+  if [[ ! -f "$WEB_APP_DIR/Dockerfile" ]]; then
+    echo "Erro: $WEB_APP_DIR/Dockerfile não encontrado." >&2
+    echo "      Clone o 4frames-web-app ao lado do 4frames-core-api, numa branch com o Dockerfile (develop)," >&2
+    echo "      ou aponte WEB_APP_DIR para o clone." >&2
+    exit 1
+  fi
+  WEB_APP_DIR="$(cd "$WEB_APP_DIR" && pwd)"
+}
+
 up_infra() {
   echo "Subindo infra no Compose (postgres redis mailpit localstack)"
   # --wait: o Job de migrations precisa do Postgres saudável, e os apps, do LocalStack com filas e bucket.
@@ -126,7 +153,7 @@ build_and_load() {
     echo "Buildando 4frames-$app:local"
     # --provenance=false: a atestação de proveniência leva timestamp e mudaria o ID a cada build, mesmo com
     # tudo em cache. Com o ID estável, o `kind load` pula imagens que o nó já tem e só reinicia o que mudou.
-    docker build --provenance=false -t "4frames-$app:local" -f "$(dockerfile_for "$app")" "$ROOT_DIR"
+    docker build --provenance=false -t "4frames-$app:local" -f "$(dockerfile_for "$app")" "$(context_for "$app")"
     after="$(docker image inspect -f '{{.Id}}' "4frames-$app:local")"
     # O Job migrate é recriado a cada deploy; só os Deployments precisam de restart.
     if [[ "$before" != "$after" && "$app" != "migrate" ]]; then
@@ -203,6 +230,13 @@ install_keda() {
   kubectl rollout status deployment/keda-operator -n keda --timeout=120s
 }
 
+# O `kubectl apply` imprime "configured" para o objeto que mudou; "unchanged" e "created" não pedem restart.
+note_config_change() {
+  if grep -qE '^(configmap/4frames-config|secret/4frames-secret) configured$' <<<"$1"; then
+    CONFIG_CHANGED=1
+  fi
+}
+
 apply_app() {
   local gateway="$1"
 
@@ -212,14 +246,17 @@ apply_app() {
   # não traz o Secret do base, então o apply abaixo não o sobrescreve. DB_USERNAME e DB_DATABASE
   # também estão no ConfigMap; o secretRef vem depois no envFrom e vale o do Secret.
   echo "Gerando o Secret 4frames-secret a partir do .env"
-  kubectl -n "$NAMESPACE" create secret generic 4frames-secret \
+  local applied
+  applied="$(kubectl -n "$NAMESPACE" create secret generic 4frames-secret \
     --from-literal=DB_USERNAME="$DB_USERNAME" \
     --from-literal=DB_PASSWORD="$DB_PASSWORD" \
     --from-literal=DB_DATABASE="$DB_DATABASE" \
     --from-literal=JWT_SECRET_KEY="$JWT_SECRET_KEY" \
     --from-literal=AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
     --from-literal=AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
-    --dry-run=client -o yaml | kubectl apply -f -
+    --dry-run=client -o yaml | kubectl apply -f -)"
+  echo "$applied"
+  note_config_change "$applied"
 
   # O spec.template de um Job é imutável: o Job migrate é apagado e recriado a cada deploy. Rodar de novo é
   # seguro, porque o migrate deploy só aplica o que falta e o seed usa upsert.
@@ -231,9 +268,14 @@ apply_app() {
   # Os webhooks de admissão do KEDA e do ingress-nginx podem recusar chamadas por alguns segundos depois
   # que os pods ficam prontos, enquanto o certificado é injetado. O apply é idempotente: tenta de novo.
   for attempt in 1 2 3 4 5; do
-    if kubectl apply -f - <<<"$manifests"; then
+    # Uma tentativa que falha pode ter aplicado o ConfigMap: a mudança é anotada em todas.
+    if applied="$(kubectl apply -f - <<<"$manifests")"; then
+      echo "$applied"
+      note_config_change "$applied"
       break
     fi
+    echo "$applied"
+    note_config_change "$applied"
     if [[ "$attempt" -eq 5 ]]; then
       echo "Erro: o overlay não foi aplicado depois de 5 tentativas" >&2
       exit 1
@@ -250,9 +292,15 @@ apply_app() {
   fi
 
   # A tag é sempre :local: se o manifesto não mudou, o Deployment não troca de pod sozinho e seguiria com o
-  # código antigo. Reinicia só quem teve a imagem reconstruída.
-  for app in ${CHANGED_APPS[@]+"${CHANGED_APPS[@]}"}; do
-    echo "Imagem de $app mudou: reiniciando o Deployment"
+  # código antigo. Reinicia quem teve a imagem reconstruída e, se o ConfigMap ou o Secret mudaram, os apps que
+  # os leem: sem isso, um valor novo (ex.: WEB_APP_URL) não chegaria aos pods que já estão rodando.
+  local restart=(${CHANGED_APPS[@]+"${CHANGED_APPS[@]}"})
+  if [[ "$CONFIG_CHANGED" -eq 1 ]]; then
+    echo "ConfigMap ou Secret mudaram: ${CONFIG_APPS[*]} serão reiniciados"
+    restart+=("${CONFIG_APPS[@]}")
+  fi
+  for app in $(printf '%s\n' ${restart[@]+"${restart[@]}"} | sort -u); do
+    echo "Reiniciando o Deployment $app"
     kubectl -n "$NAMESPACE" rollout restart "deployment/$app"
   done
 
@@ -269,9 +317,9 @@ show_validation() {
 │  Setup local pronto                                          │
 ╰──────────────────────────────────────────────────────────────╯
 
-  API:     http://localhost:8080/api/health-check (pelo Ingress)
+  Front:   http://localhost:8080 (pelo Ingress)
+  API:     http://localhost:8080/api/health-check
   Docs:    http://localhost:8080/api/api-docs/
-  Front:   VITE_API_URL=http://localhost:8080/api pnpm dev (no 4frames-web-app)
   Mailpit: http://localhost:8025
 
   # Pods, Ingress, HPA e ScaledObject
@@ -289,6 +337,7 @@ MSG
 cmd_up() {
   load_env
   require_tools
+  require_web_app
   up_infra
   up_cluster
   local gateway
