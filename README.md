@@ -196,7 +196,8 @@ Regras de merge (CI verde + revisão de outra pessoa, sem branch protection no p
 - `POST /videos/:jobId/complete` — confirma o upload no S3 (HEAD do objeto) e avança o job para `QUEUED`
 - `POST /videos/:jobId/cancel` — cancela um job em `UPLOAD_PENDING` ou `QUEUED` (reaproveita o status `EXPIRED`)
 - `GET /videos/:jobId/download` — URL pré-assinada de download do `.zip` (só quando o job está `DONE`)
-- `GET /health-check` — health check
+- `GET /health-check` — o processo está de pé (liveness)
+- `GET /ready` — Postgres e Redis respondem: `200` ou `503`, com o estado de cada um (readiness)
 - `GET /api-docs` — documentação OpenAPI
 
 Todas as rotas de `/videos` exigem `Authorization: Bearer <token>`, exceto `GET /videos/:jobId/events`,

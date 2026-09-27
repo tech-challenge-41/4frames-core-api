@@ -231,11 +231,32 @@ producer, only a subscriber.
   logs the path without the query string. Keep both if you touch request logging.
 - The stream ends itself on a terminal event (`job.done`/`job.failed`); a 15s
   heartbeat comment (`: heartbeat\n\n`) keeps proxies from closing an idle
-  connection meanwhile.
+  connection meanwhile. Headers are flushed right after `writeHead`, so the
+  `EventSource` opens before the first event.
+- Every open stream registers in `SseStreamRegistry` (`infra/http/shutdown/`). On
+  SIGTERM, `HttpShutdown` ends them with `retry: 1000` so the `EventSource`
+  reconnects to a replica that is still up; otherwise `server.close()` would wait
+  for them forever. A new streaming endpoint must register the same way.
 - The frontend keeps `GET /videos/:jobId` polling running in parallel as the
   source of truth for status; SSE only adds the live percentage during
   `PROCESSING`. `EventSource` reconnects on its own, so a dropped SSE connection
   is not treated as fatal on either side.
+
+## Readiness and graceful shutdown (API)
+
+- `GET /health-check` is liveness: the process is up, nothing else. `GET /ready` is readiness:
+  `CheckReadinessUseCase` runs every `IDependencyHealthIndicator` (`PostgresHealthService`:
+  `SELECT 1`; `RedisHealthService`: `PING` on its own client) in parallel, 2 s each, and the
+  controller answers 200 or 503 with `{ status, checks }`. A new hard dependency of the API gets an
+  indicator registered in `use-case.dependency.ts`. Both probe paths are left out of the access log.
+- `main.ts` registers `registerGracefulShutdown` (`@4frames/shared/process`) with
+  `API_SHUTDOWN_TIMEOUT_SECONDS` (default 20). The API is PID 1 in its container: without a handler
+  the kernel ignores SIGTERM and the pod only dies on SIGKILL. `HttpShutdown.run` stops accepting
+  connections, answers with `Connection: close`, ends the SSE streams, waits for in-flight requests
+  (closing keep-alive connections as they go idle) until the drain deadline, then closes Redis and
+  Prisma. The cluster adds a 5 s `preStop` sleep and `terminationGracePeriodSeconds: 35`.
+- Anything the API keeps open for its whole life (a client, a pool) must be closed in the
+  `closeResources` callback in `http-initialize.ts`; otherwise `process.exit` just drops it.
 
 ## Local environment (Compose + LocalStack)
 
