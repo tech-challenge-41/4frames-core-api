@@ -1,6 +1,7 @@
 import { type Server } from 'node:http';
 
 import { prisma } from '@4frames/shared/prisma';
+import { type Redis } from '@4frames/shared/redis';
 import cors from 'cors';
 import express from 'express';
 import swaggerUi from 'swagger-ui-express';
@@ -8,7 +9,7 @@ import swaggerUi from 'swagger-ui-express';
 import { Container } from '@/dependencies/container';
 import { appLogger } from '@/infra/logging/application-logger';
 import { createHttpRequestLoggerMiddleware } from '@/infra/logging/pino/http-request-logger.middleware';
-import { RedisHealthService } from '@/infra/services/redis-health.service';
+import { REDIS_COMMAND_CLIENT_KEY } from '@/infra/services/redis-command-client';
 
 import { openapi } from './docs/openapi';
 import { errorHandler } from './middlewares/error-handler.middleware';
@@ -45,7 +46,8 @@ export async function HTTPInitialize({ drainTimeoutMs }: HttpInitializeOptions):
     logger: appLogger.child({ component: HttpShutdown.name }),
     drainTimeoutMs,
     closeResources: async () => {
-      container.resolve<RedisHealthService>(RedisHealthService.name).close();
+      // disconnect não espera resposta, então não trava com o Redis fora do ar.
+      container.resolve<Redis>(REDIS_COMMAND_CLIENT_KEY).disconnect();
       await prisma.$disconnect();
     }
   });
