@@ -7,6 +7,81 @@ O front fica em [`4frames-web-app`](https://github.com/tech-challenge-41/4frames
 branch, commit e PR estão no [CONTRIBUTING.md](./CONTRIBUTING.md). Convenções de código estão no
 [CLAUDE.md](./CLAUDE.md).
 
+## Como rodar a solução completa
+
+Um comando sobe tudo num cluster Kubernetes local (Kind):
+
+- o front e a API atrás do Ingress, com a API escalada pelo HPA;
+- o worker escalado pelo KEDA pela profundidade da fila SQS;
+- o notifier.
+
+Postgres, Redis, LocalStack (S3 e SQS) e Mailpit rodam no Docker Compose, fora do cluster, como os serviços gerenciados ficavam fora do EKS no ADR-001.
+
+**Pré-requisitos**
+
+- Docker com Compose v2 e 8 GB de memória ou mais para ele. Em repouso a stack usa cerca de 2,5 GB; no pico, cada worker processa um vídeo com ffmpeg.
+- [kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation), [kubectl](https://kubernetes.io/docs/tasks/tools/), `curl` e Git. No Windows, rode os comandos no Git Bash.
+- Portas livres no host: 8080 e 8443 (Ingress), 5432, 6379, 4566, 1025 e 8025.
+
+Node e pnpm não são necessários: as imagens são construídas dentro do Docker.
+
+```bash
+git clone https://github.com/tech-challenge-41/4frames-core-api.git
+git clone https://github.com/tech-challenge-41/4frames-web-app.git
+cd 4frames-core-api
+./scripts/k8s-local.sh up
+```
+
+O front é construído a partir do `4frames-web-app` clonado ao lado. Se não houver `.env`, o `up` cria um a partir do `.env.example`. Depois ele segue estas etapas, esperando cada uma ficar pronta:
+
+1. Infra no Compose: Postgres, Redis, Mailpit e LocalStack com bucket, filas e DLQ.
+2. Cluster Kind `4frames-local`, com o Ingress publicado em 8080 e 8443.
+3. Build das imagens `api`, `worker`, `notifier`, `web` e `migrate`, carregadas no nó.
+4. metrics-server, para o HPA medir a CPU da API.
+5. ingress-nginx.
+6. KEDA.
+7. Migrations e seed num Job e, depois, os apps.
+8. Verificação pelo Ingress: o front em `/` e a API em `/api/ready`, que só responde 200 com banco e Redis de pé.
+
+A primeira execução baixa as imagens base e constrói tudo, por isso demora mais. As seguintes aproveitam o cache. Rodar o `up` de novo com a stack no ar atualiza o que mudou.
+
+| O quê    | Onde                                                                            |
+| -------- | ------------------------------------------------------------------------------- |
+| Front    | http://localhost:8080, com o usuário do seed `admin@admin.com` / `123456`       |
+| API      | http://localhost:8080/api, com o Swagger em http://localhost:8080/api/api-docs/ |
+| E-mails  | Mailpit, http://localhost:8025                                                  |
+| S3 e SQS | LocalStack, http://localhost:4566                                               |
+
+```bash
+./scripts/k8s-local.sh status       # pods, Ingress, HPA e ScaledObject
+./scripts/k8s-local.sh logs         # últimas linhas de cada app
+./scripts/k8s-local.sh down         # apaga o cluster; a infra do Compose continua
+./scripts/k8s-local.sh down --all   # apaga o cluster e derruba a infra do Compose
+```
+
+O `down --all` mantém o volume do Postgres. Para apagar também os dados, rode `docker compose down -v` depois. Depois de reiniciar a máquina ou o Docker Desktop, rode `down` e `up`: o nó do Kind volta sem as portas publicadas.
+
+### Ajustar as réplicas
+
+| App    | Quem escala         | Arquivo                                   | Campos (padrão)                                                                      |
+| ------ | ------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------ |
+| API    | HPA, pela CPU       | `infra/k8s/base/api-hpa.yaml`             | `minReplicas` (2), `maxReplicas` (4), `averageUtilization` (70 % do `requests.cpu`)  |
+| Worker | KEDA, pela fila SQS | `infra/k8s/base/worker-scaledobject.yaml` | `minReplicaCount` (1), `maxReplicaCount` (5), `queueLength` (1 mensagem por réplica) |
+
+Para mudar de vez, edite o arquivo e rode `./scripts/k8s-local.sh up`. Para experimentar sem editar, mude direto no cluster. O próximo `up` volta aos valores dos arquivos.
+
+```bash
+kubectl -n 4frames patch hpa api --type merge -p '{"spec":{"minReplicas":2,"maxReplicas":6}}'
+kubectl -n 4frames patch scaledobject worker --type merge -p '{"spec":{"minReplicaCount":0,"maxReplicaCount":8}}'
+kubectl -n 4frames get hpa,scaledobject
+```
+
+- Cada worker processa um vídeo por vez (`WORKER_MAX_PARALLEL_JOBS=1` no ConfigMap), então o máximo de réplicas é o máximo de vídeos em paralelo. Numa máquina só, réplicas além do número de núcleos não aceleram nada.
+- Com `minReplicaCount: 0`, o KEDA desliga o worker quando a fila esvazia, e o primeiro vídeo seguinte espera um pod subir.
+- O HPA depende do metrics-server, cuja primeira coleta leva perto de um minuto.
+
+Detalhes dos manifestos, do script e do CD: [infra/k8s/README.md](./infra/k8s/README.md).
+
 ## Documentação
 
 [Decisões de arquitetura](./docs/adr/README.md): o [ADR-001](./docs/adr/ADR-001-arquitetura.pdf) define a
@@ -72,33 +147,16 @@ pnpm dev:api
 
 ### Cluster Kubernetes local (Kind)
 
-É onde a stack roda e escala como no ADR-002: front e API atrás do Ingress, API com HPA, worker escalado pelo
-KEDA pela profundidade da fila SQS (um vídeo por réplica) e notifier. A infra (Postgres, Redis, LocalStack e
-Mailpit) continua no Compose, fora do cluster.
+É a [solução completa](#como-rodar-a-solução-completa), com `./scripts/k8s-local.sh up`. No desenvolvimento:
 
-A imagem do front é construída a partir do
-[`4frames-web-app`](https://github.com/tech-challenge-41/4frames-web-app), que precisa estar clonado ao lado
-deste repositório (ou em `WEB_APP_DIR`).
-
-```bash
-./scripts/k8s-local.sh up
-```
-
-O script sobe a infra no Compose, cria o cluster, constrói e carrega as imagens, instala o metrics-server, o
-ingress-nginx e o KEDA e aplica o overlay `infra/k8s/overlays/local`. As migrations e o seed rodam num Job do
-cluster, antes dos apps.
-Pare antes `api`, `worker` e `notifier` do Compose, que disputariam a mesma fila:
-`docker compose stop api worker notifier`.
-
-| O quê       | Como                                                                                            |
-| ----------- | ----------------------------------------------------------------------------------------------- |
-| Front       | http://localhost:8080 (pelo Ingress)                                                            |
-| API         | http://localhost:8080/api/health-check e http://localhost:8080/api/api-docs/ (pelo Ingress)     |
-| Login       | `admin@admin.com` / `123456` (seed), pelo front ou em `POST /api/auth`                          |
-| Front (dev) | No `4frames-web-app`: `VITE_API_URL=http://localhost:8080/api pnpm dev` → http://localhost:5173 |
-| Escala      | `kubectl -n 4frames get pods -l app.kubernetes.io/name=worker -w` enquanto enfileira vídeos     |
-| Status/logs | `./scripts/k8s-local.sh status` / `./scripts/k8s-local.sh logs`                                 |
-| Desligar    | `./scripts/k8s-local.sh down` (apaga o cluster; a infra do Compose continua)                    |
+- Pare antes `api`, `worker` e `notifier` do Compose, que disputariam a mesma fila com o cluster:
+  `docker compose stop api worker notifier`. O `up` avisa quando eles estão no ar.
+- Código novo entra no cluster com outro `up`: ele reconstrói as imagens e reinicia só os Deployments cuja
+  imagem mudou.
+- Para o front em modo dev contra a API do cluster, no `4frames-web-app`:
+  `VITE_API_URL=http://localhost:8080/api pnpm dev` → http://localhost:5173.
+- `kubectl -n 4frames get pods -l app.kubernetes.io/name=worker -w` mostra o KEDA subindo workers enquanto
+  vídeos entram na fila.
 
 Layout dos manifestos, o que o script faz passo a passo e o deploy de uma tag `release-*`:
 [infra/k8s/README.md](./infra/k8s/README.md).

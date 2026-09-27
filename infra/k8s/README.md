@@ -68,15 +68,18 @@ acesso do ingress-nginx grava o caminho sem a query string, e a API mascara `?to
 
 ## Cluster local (Kind)
 
-Pré-requisitos: Docker, [kind](https://kind.sigs.k8s.io/), `kubectl`, o `.env` na raiz (`cp .env.example .env`) e
-o [`4frames-web-app`](https://github.com/tech-challenge-41/4frames-web-app) clonado ao lado deste repositório,
-de onde sai a imagem do front. `WEB_APP_DIR` aponta para um clone em outro lugar.
+Pré-requisitos: Docker rodando, com Compose v2, [kind](https://kind.sigs.k8s.io/), `kubectl`, `curl` e o
+[`4frames-web-app`](https://github.com/tech-challenge-41/4frames-web-app) clonado ao lado deste repositório,
+de onde sai a imagem do front. `WEB_APP_DIR` aponta para um clone em outro lugar. O passo a passo para uma
+máquina limpa está no [README da raiz](../../README.md#como-rodar-a-solução-completa).
 
 ```bash
 ./scripts/k8s-local.sh up
 ```
 
-O script, em ordem:
+Antes de mexer em qualquer coisa, o script confere as ferramentas, se o Docker responde e se o clone do front
+tem `Dockerfile`, e cria o `.env` a partir do `.env.example` se ele não existir. Depois, em etapas numeradas
+na saída:
 
 1. Sobe a infra no Compose (`postgres redis mailpit localstack`) e espera ela ficar saudável. As migrations
    rodam no cluster (passo 9); o serviço `migrate` do Compose fica para o desenvolvimento no Compose.
@@ -102,6 +105,9 @@ O script, em ordem:
    detectado e aplica. Espera o Job de migrations e seed terminar, mostrando o log dele se falhar. Se o apply
    alterou o ConfigMap ou o Secret, reinicia `api`, `worker` e `notifier`, que leem os dois por `envFrom` e só
    veem valores novos em pods novos. Depois espera os rollouts.
+10. Confere pelo Ingress, como o navegador: `http://localhost:8080/` (front) e
+    `http://localhost:8080/api/ready` (API com Postgres e Redis) respondendo 200, com até 2 minutos de espera.
+    Por fim imprime os endereços e o tempo total.
 
 Ao reusar um cluster, o script confere se a porta do Ingress está publicada. Um cluster criado antes dela
 no `kind-config.yaml`, ou que voltou de um reinício do Docker Desktop, aborta com a instrução de recriar.
@@ -112,13 +118,19 @@ no `kind-config.yaml`, ou que voltou de um reinício do Docker Desktop, aborta c
 | API          | http://localhost:8080/api/health-check e http://localhost:8080/api/api-docs/ (pelo Ingress)     |
 | Front em dev | No `4frames-web-app`: `VITE_API_URL=http://localhost:8080/api pnpm dev` → http://localhost:5173 |
 | E-mails      | Mailpit do Compose, http://localhost:8025                                                       |
+| S3 e SQS     | LocalStack do Compose, http://localhost:4566                                                    |
 
 ```bash
 ./scripts/k8s-local.sh status                                  # pods, services, Ingress, HPA e ScaledObject
 ./scripts/k8s-local.sh logs                                    # últimas linhas dos apps, do front e do migrate
 kubectl -n 4frames get pods -l app.kubernetes.io/name=worker -w   # KEDA subindo workers com a fila cheia
 ./scripts/k8s-local.sh down                                    # apaga o cluster; a infra do Compose continua
+./scripts/k8s-local.sh down --all                              # apaga o cluster e derruba a infra do Compose
 ```
+
+O `down --all` roda `docker compose down` sem `-v`: o volume do Postgres fica, e o próximo `up` encontra os
+dados. O LocalStack não guarda objetos nem mensagens entre reinícios. Mínimo e máximo de réplicas do HPA e do
+KEDA: [README da raiz](../../README.md#ajustar-as-réplicas).
 
 - Não deixe `api`, `worker` e `notifier` do Compose no ar junto com o cluster: disputam a mesma fila. O script
   avisa; pare-os com `docker compose stop api worker notifier`.

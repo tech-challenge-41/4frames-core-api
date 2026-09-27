@@ -26,7 +26,7 @@ packages/
       generated/  Prisma Client output (gitignored, created by `pnpm db:generate`)
 infra/localstack/init/             LocalStack bootstrap scripts
 infra/k8s/                         Kustomize: base (api + HPA, worker + KEDA, notifier, web, Ingress /api and /, migrate Job), overlays local/ci, kind-config.yaml
-scripts/k8s-local.sh               local Kind cluster: Compose infra, images (web from ../4frames-web-app), metrics-server, ingress-nginx, KEDA, migrate Job, overlay local
+scripts/k8s-local.sh               the one command for the full stack: `up` (Compose infra, Kind, images incl. web from ../4frames-web-app, metrics-server, ingress-nginx, KEDA, migrate Job, overlay local, check through the Ingress), `down [--all]`
 .github/workflows/                 ci.yml (test→lint→type-check→k8s→build) + cd.yml (release-* → GHCR + Kind smoke)
 docs/adr/                          architecture decisions: ADR-001 (PDF, AWS design) + ADR-002 (local run, monorepo, UUID)
 tsconfig.base.json                 compiler options shared by every package
