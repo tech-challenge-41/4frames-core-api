@@ -248,8 +248,10 @@ Regras de merge (CI verde + revisão de outra pessoa, sem branch protection no p
 
 - `POST /auth` — autenticação por email e senha
 - `POST /videos` — cria um job de conversão (`UPLOAD_PENDING`) e devolve uma URL pré-assinada de upload ao S3
-- `GET /videos` — lista os jobs do usuário autenticado, paginado (`limit`/`offset`), mais recentes primeiro
-- `GET /videos/:jobId` — consulta status do job (autorizado apenas para o dono)
+- `GET /videos` — lista os jobs do usuário autenticado, paginado (`limit`/`offset`), mais recentes primeiro,
+  com o percentual (`progress`) dos jobs em `PROCESSING`
+- `GET /videos/:jobId` — consulta status do job (autorizado apenas para o dono), com o `progress` quando em
+  `PROCESSING`
 - `GET /videos/:jobId/events` — progresso em tempo real via SSE (Server-Sent Events), alimentado pelo Redis Pub/Sub que o worker publica
 - `POST /videos/:jobId/complete` — confirma o upload no S3 (HEAD do objeto) e avança o job para `QUEUED`
 - `POST /videos/:jobId/cancel` — cancela um job em `UPLOAD_PENDING` ou `QUEUED` (reaproveita o status `EXPIRED`)
@@ -269,8 +271,9 @@ recebe `400`.
 2. O cliente faz `PUT` do arquivo direto na `uploadUrl` (bytes não passam pela API).
 3. `POST /videos/{jobId}/complete` → confirma o objeto no bucket e marca `QUEUED`. Até esse ponto o job
    ainda pode ser cancelado com `POST /videos/{jobId}/cancel`.
-4. `GET /videos/{jobId}` (polling) ou `GET /videos/{jobId}/events` (SSE, progresso ao vivo durante
-   `PROCESSING`) → acompanha o status: `UPLOAD_PENDING` → `QUEUED` → `PROCESSING` → `DONE`/`FAILED`/`EXPIRED`.
+4. `GET /videos/{jobId}` (polling, com o último percentual em `progress`) ou `GET /videos/{jobId}/events` (SSE,
+   progresso ao vivo durante `PROCESSING`) → acompanha o status: `UPLOAD_PENDING` → `QUEUED` → `PROCESSING` →
+   `DONE`/`FAILED`/`EXPIRED`. O percentual vem do Redis e é opcional: sem ele, a resposta sai sem o campo.
 5. Quando `DONE`, `GET /videos/{jobId}/download` devolve uma URL pré-assinada de `GET` para o `.zip`.
 
 O processamento em si é feito pelo worker (ver [Worker](#worker)), e o `apps/notifier` manda o e-mail em

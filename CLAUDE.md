@@ -241,14 +241,22 @@ producer, only a subscriber.
   source of truth for status; SSE only adds the live percentage during
   `PROCESSING`. `EventSource` reconnects on its own, so a dropped SSE connection
   is not treated as fatal on either side.
+- `GET /videos` and `GET /videos/:jobId` also carry the last stored percentage as an
+  optional `progress`, read through `IJobProgressReader` (`RedisJobProgressReaderService`:
+  one `MGET progress:*` per request). Only `PROCESSING` jobs get it — the worker leaves
+  `100` stored for an hour after `DONE`. It is best-effort: if Redis fails, the reader
+  returns an empty map and the response goes out without `progress`.
 
 ## Readiness and graceful shutdown (API)
 
 - `GET /health-check` is liveness: the process is up, nothing else. `GET /ready` is readiness:
   `CheckReadinessUseCase` runs every `IDependencyHealthIndicator` (`PostgresHealthService`:
-  `SELECT 1`; `RedisHealthService`: `PING` on its own client) in parallel, 2 s each, and the
-  controller answers 200 or 503 with `{ status, checks }`. A new hard dependency of the API gets an
-  indicator registered in `use-case.dependency.ts`. Both probe paths are left out of the access log.
+  `SELECT 1`; `RedisHealthService`: `PING`) in parallel, 2 s each, and the controller answers 200 or
+  503 with `{ status, checks }`. A new hard dependency of the API gets an indicator registered in
+  `use-case.dependency.ts`. Both probe paths are left out of the access log.
+- The API has one Redis command connection (`createRedisCommandClient`, registered as
+  `REDIS_COMMAND_CLIENT_KEY`), shared by the `/ready` PING and the progress MGET, with one retry and
+  a 1 s command timeout. SSE streams never use it: each opens its own subscriber connection.
 - `main.ts` registers `registerGracefulShutdown` (`@4frames/shared/process`) with
   `API_SHUTDOWN_TIMEOUT_SECONDS` (default 20). The API is PID 1 in its container: without a handler
   the kernel ignores SIGTERM and the pod only dies on SIGKILL. `HttpShutdown.run` stops accepting
