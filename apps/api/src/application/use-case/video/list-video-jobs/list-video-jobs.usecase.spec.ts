@@ -1,3 +1,4 @@
+import { type IJobProgressReader } from '@/domain/ports/service/job-progress-reader.service.interface';
 import { type IVideoJobService, type VideoJobRecord } from '@/domain/ports/service/video-job.service.interface';
 
 import { ListVideoJobsUseCase } from './list-video-jobs.usecase';
@@ -22,6 +23,7 @@ function buildJob(overrides: Partial<VideoJobRecord> = {}): VideoJobRecord {
 describe('ListVideoJobsUseCase', () => {
   let useCase: ListVideoJobsUseCase;
   let videoJobService: jest.Mocked<IVideoJobService>;
+  let jobProgressReader: jest.Mocked<IJobProgressReader>;
 
   beforeEach(() => {
     videoJobService = {
@@ -32,7 +34,9 @@ describe('ListVideoJobsUseCase', () => {
       cancelIfPending: jest.fn()
     };
 
-    useCase = new ListVideoJobsUseCase({ videoJobService });
+    jobProgressReader = { getMany: jest.fn().mockResolvedValue(new Map()) };
+
+    useCase = new ListVideoJobsUseCase({ videoJobService, jobProgressReader });
   });
 
   it('should return an empty list when the user has no jobs', async () => {
@@ -111,5 +115,34 @@ describe('ListVideoJobsUseCase', () => {
 
     expect(videoJobService.listByUser).toHaveBeenCalledWith(USER_ID, { limit: 5, offset: 10 });
     expect(result).toEqual({ items: [], total: 42, limit: 5, offset: 10 });
+  });
+
+  it('should read the progress of PROCESSING jobs only, in one call, and add it where there is one', async () => {
+    const processingWithProgress = buildJob({ id: 'job-a', status: 'PROCESSING', zipKey: null });
+    const processingWithoutProgress = buildJob({ id: 'job-b', status: 'PROCESSING', zipKey: null });
+    const done = buildJob({ id: 'job-c' });
+    videoJobService.listByUser.mockResolvedValue({
+      items: [processingWithProgress, processingWithoutProgress, done],
+      total: 3
+    });
+    jobProgressReader.getMany.mockResolvedValue(new Map([['job-a', 42]]));
+
+    const result = await useCase.execute({ userId: USER_ID, limit: 20, offset: 0 });
+
+    expect(jobProgressReader.getMany).toHaveBeenCalledTimes(1);
+    expect(jobProgressReader.getMany).toHaveBeenCalledWith(['job-a', 'job-b']);
+    expect(result.items[0].progress).toBe(42);
+    expect(result.items[1]).not.toHaveProperty('progress');
+    expect(result.items[2]).not.toHaveProperty('progress');
+  });
+
+  it('should not show the 100 % the worker leaves behind for a DONE job', async () => {
+    videoJobService.listByUser.mockResolvedValue({ items: [buildJob({ id: 'job-c' })], total: 1 });
+    jobProgressReader.getMany.mockResolvedValue(new Map([['job-c', 100]]));
+
+    const result = await useCase.execute({ userId: USER_ID, limit: 20, offset: 0 });
+
+    expect(jobProgressReader.getMany).toHaveBeenCalledWith([]);
+    expect(result.items[0]).not.toHaveProperty('progress');
   });
 });

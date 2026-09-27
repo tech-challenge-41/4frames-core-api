@@ -1,5 +1,6 @@
 import { DomainError } from '@/domain/error/domain-error';
 import { DomainErrorTypes } from '@/domain/error/error-types';
+import { type IJobProgressReader } from '@/domain/ports/service/job-progress-reader.service.interface';
 import { type IVideoJobService, type VideoJobRecord } from '@/domain/ports/service/video-job.service.interface';
 
 import { GetVideoJobStatusUseCase } from './get-video-job-status.usecase';
@@ -25,6 +26,7 @@ function buildJob(overrides: Partial<VideoJobRecord> = {}): VideoJobRecord {
 describe('GetVideoJobStatusUseCase', () => {
   let useCase: GetVideoJobStatusUseCase;
   let videoJobService: jest.Mocked<IVideoJobService>;
+  let jobProgressReader: jest.Mocked<IJobProgressReader>;
 
   beforeEach(() => {
     videoJobService = {
@@ -35,7 +37,9 @@ describe('GetVideoJobStatusUseCase', () => {
       cancelIfPending: jest.fn()
     };
 
-    useCase = new GetVideoJobStatusUseCase({ videoJobService });
+    jobProgressReader = { getMany: jest.fn().mockResolvedValue(new Map()) };
+
+    useCase = new GetVideoJobStatusUseCase({ videoJobService, jobProgressReader });
   });
 
   it('should return the job status when the job belongs to the user', async () => {
@@ -71,6 +75,40 @@ describe('GetVideoJobStatusUseCase', () => {
     await expect(useCase.execute({ userId: 1, jobId: MISSING_JOB_ID })).rejects.toMatchObject({
       type: DomainErrorTypes.NOT_FOUND
     });
+  });
+
+  it('should add the Redis progress of a PROCESSING job', async () => {
+    videoJobService.findById.mockResolvedValue(buildJob());
+    jobProgressReader.getMany.mockResolvedValue(new Map([[JOB_ID, 37.5]]));
+
+    const result = await useCase.execute({ userId: 1, jobId: JOB_ID });
+
+    expect(jobProgressReader.getMany).toHaveBeenCalledWith([JOB_ID]);
+    expect(result.progress).toBe(37.5);
+  });
+
+  it('should leave progress out when a PROCESSING job has none stored yet', async () => {
+    videoJobService.findById.mockResolvedValue(buildJob());
+
+    const result = await useCase.execute({ userId: 1, jobId: JOB_ID });
+
+    expect(result).not.toHaveProperty('progress');
+  });
+
+  it('should not read the progress of a job that is not PROCESSING', async () => {
+    videoJobService.findById.mockResolvedValue(buildJob({ status: 'DONE', zipKey: 'zips/1/x.zip' }));
+
+    const result = await useCase.execute({ userId: 1, jobId: JOB_ID });
+
+    expect(jobProgressReader.getMany).not.toHaveBeenCalled();
+    expect(result).not.toHaveProperty('progress');
+  });
+
+  it('should not read the progress before checking the owner', async () => {
+    videoJobService.findById.mockResolvedValue(buildJob({ userId: 2 }));
+
+    await expect(useCase.execute({ userId: 1, jobId: JOB_ID })).rejects.toThrow(DomainError);
+    expect(jobProgressReader.getMany).not.toHaveBeenCalled();
   });
 
   it('should throw NOT_FOUND DomainError when the job belongs to another user', async () => {

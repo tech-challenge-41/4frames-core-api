@@ -39,6 +39,14 @@ export const getVideoJobStatusPath = {
                   failureReason: {
                     type: 'string',
                     description: 'Motivo da falha, presente apenas quando status é FAILED'
+                  },
+                  progress: {
+                    type: 'number',
+                    minimum: 0,
+                    maximum: 100,
+                    description:
+                      'Percentual do processamento, lido do Redis. Presente só em PROCESSING, depois de o worker ' +
+                      'publicar o primeiro valor; ausente se o Redis não responder. Ao vivo: GET /videos/{jobId}/events'
                   }
                 }
               }

@@ -10,6 +10,7 @@ import { LOGGER_KEY } from '@/domain/ports/service/logger.interface';
 import { readUploadUrlTtlSeconds } from '@/infra/config/upload.config';
 import { PostgresHealthService } from '@/infra/services/postgres-health.service';
 import { RedisHealthService } from '@/infra/services/redis-health.service';
+import { RedisJobProgressReaderService } from '@/infra/services/redis-job-progress-reader.service';
 import { S3PresignedUrlService } from '@/infra/services/s3-presigned-url.service';
 import { UserAuthenticatorService } from '@/infra/services/user-authenticator.service';
 import { VideoJobService } from '@/infra/services/video-job.service';
@@ -34,7 +35,8 @@ export async function useCaseDependency(c: Container) {
   c.register(
     GetVideoJobStatusUseCase.name,
     new GetVideoJobStatusUseCase({
-      videoJobService: c.resolve(VideoJobService.name)
+      videoJobService: c.resolve(VideoJobService.name),
+      jobProgressReader: c.resolve(RedisJobProgressReaderService.name)
     })
   );
   c.register(
@@ -54,7 +56,8 @@ export async function useCaseDependency(c: Container) {
   c.register(
     ListVideoJobsUseCase.name,
     new ListVideoJobsUseCase({
-      videoJobService: c.resolve(VideoJobService.name)
+      videoJobService: c.resolve(VideoJobService.name),
+      jobProgressReader: c.resolve(RedisJobProgressReaderService.name)
     })
   );
   c.register(
