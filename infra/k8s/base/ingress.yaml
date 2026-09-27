@@ -1,0 +1,29 @@
+# Entrada HTTP do cluster, no lugar do ALB do ADR-001. /api/* chega à API sem o prefixo:
+# /api/videos → /videos. O front entra por / quando rodar no cluster.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: 4frames
+  namespace: 4frames
+  labels:
+    app.kubernetes.io/part-of: 4frames
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: 'true'
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    # SSE (GET /videos/:jobId/events): sem buffering, cada evento sai na hora em vez de esperar o buffer
+    # encher. O timeout longo é a margem para a conexão aberta; o heartbeat da API a cada 15 s já a mantém viva.
+    nginx.ingress.kubernetes.io/proxy-buffering: 'off'
+    nginx.ingress.kubernetes.io/proxy-read-timeout: '3600'
+    nginx.ingress.kubernetes.io/proxy-send-timeout: '3600'
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /api(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: api
+                port:
+                  name: http

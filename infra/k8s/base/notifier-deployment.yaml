@@ -31,6 +31,14 @@ spec:
                 name: 4frames-secret
           # /healthz só abre depois da assinatura de jobs.events e responde 503 se a conexão com o
           # Redis terminar de vez: sem assinatura, o notifier não recebe evento nenhum.
+          # A startupProbe dá até 150 s para a partida (assinatura incluída) antes de a liveness contar.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
           readinessProbe:
             httpGet:
               path: /healthz

@@ -34,6 +34,14 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp/4frames
+          # Mesmo motivo da API: réplicas novas do KEDA não podem morrer pela liveness enquanto sobem. Até 150 s.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
           readinessProbe:
             httpGet:
               path: /healthz

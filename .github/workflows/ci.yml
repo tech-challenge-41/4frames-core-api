@@ -137,6 +137,9 @@ jobs:
           - name: notifier
             file: apps/notifier/Dockerfile
             tag: 4frames-notifier:ci
+          - name: migrate
+            file: packages/shared/Dockerfile
+            tag: 4frames-migrate:ci
     steps:
       - uses: actions/checkout@v4
 

@@ -72,26 +72,28 @@ pnpm dev:api
 
 ### Cluster Kubernetes local (Kind)
 
-É onde a stack roda e escala como no ADR-002: API com HPA, worker escalado pelo KEDA pela profundidade da
-fila SQS (um vídeo por réplica) e notifier. A infra (Postgres, Redis, LocalStack e Mailpit) continua no
-Compose, fora do cluster.
+É onde a stack roda e escala como no ADR-002: API com HPA atrás do Ingress, worker escalado pelo KEDA pela
+profundidade da fila SQS (um vídeo por réplica) e notifier. A infra (Postgres, Redis, LocalStack e Mailpit)
+continua no Compose, fora do cluster.
 
 ```bash
 ./scripts/k8s-local.sh up
 ```
 
-O script sobe a infra no Compose e roda migrations e seed, cria o cluster, constrói e carrega as três
-imagens, instala o KEDA e aplica o overlay `infra/k8s/overlays/local`. Pare antes `api`, `worker` e
-`notifier` do Compose, que disputariam a mesma fila: `docker compose stop api worker notifier`.
+O script sobe a infra no Compose, cria o cluster, constrói e carrega as imagens, instala o metrics-server, o
+ingress-nginx e o KEDA e aplica o overlay `infra/k8s/overlays/local`. As migrations e o seed rodam num Job do
+cluster, antes dos apps.
+Pare antes `api`, `worker` e `notifier` do Compose, que disputariam a mesma fila:
+`docker compose stop api worker notifier`.
 
-| O quê       | Como                                                                                         |
-| ----------- | -------------------------------------------------------------------------------------------- |
-| API         | http://localhost:31000/health-check e http://localhost:31000/api-docs                        |
-| Login       | `POST /auth` com `admin@admin.com` / `123456` (seed)                                         |
-| Front       | No `4frames-web-app`: `VITE_API_URL=http://localhost:31000 pnpm dev` → http://localhost:5173 |
-| Escala      | `kubectl -n 4frames get pods -l app.kubernetes.io/name=worker -w` enquanto enfileira vídeos  |
-| Status/logs | `./scripts/k8s-local.sh status` / `./scripts/k8s-local.sh logs`                              |
-| Desligar    | `./scripts/k8s-local.sh down` (apaga o cluster; a infra do Compose continua)                 |
+| O quê       | Como                                                                                            |
+| ----------- | ----------------------------------------------------------------------------------------------- |
+| API         | http://localhost:8080/api/health-check e http://localhost:8080/api/api-docs/ (pelo Ingress)     |
+| Login       | `POST /api/auth` com `admin@admin.com` / `123456` (seed)                                        |
+| Front       | No `4frames-web-app`: `VITE_API_URL=http://localhost:8080/api pnpm dev` → http://localhost:5173 |
+| Escala      | `kubectl -n 4frames get pods -l app.kubernetes.io/name=worker -w` enquanto enfileira vídeos     |
+| Status/logs | `./scripts/k8s-local.sh status` / `./scripts/k8s-local.sh logs`                                 |
+| Desligar    | `./scripts/k8s-local.sh down` (apaga o cluster; a infra do Compose continua)                    |
 
 Layout dos manifestos, o que o script faz passo a passo e o deploy de uma tag `release-*`:
 [infra/k8s/README.md](./infra/k8s/README.md).
@@ -101,7 +103,7 @@ Layout dos manifestos, o que o script faz passo a passo e o deploy de uma tag `r
 | Serviço     | Endereço                                                                           | Para quê                                     |
 | ----------- | ---------------------------------------------------------------------------------- | -------------------------------------------- |
 | API         | http://localhost:3000 (`/api-docs`)                                                | REST (Compose ou `pnpm dev:api`)             |
-| API no Kind | http://localhost:31000 (`/api-docs`)                                               | REST no cluster local                        |
+| API no Kind | http://localhost:8080/api (`/api/api-docs/`), pelo Ingress                         | REST no cluster local                        |
 | PostgreSQL  | localhost:5432                                                                     | Banco                                        |
 | LocalStack  | http://localhost:4566                                                              | S3 e SQS                                     |
 | Redis       | localhost:6379                                                                     | Progresso e eventos de job                   |
@@ -162,6 +164,7 @@ As imagens de produção são construídas a partir da raiz do monorepo:
 docker build -f apps/api/Dockerfile -t 4frames-api .
 docker build -f apps/worker/Dockerfile -t 4frames-worker .
 docker build -f apps/notifier/Dockerfile -t 4frames-notifier .
+docker build -f packages/shared/Dockerfile -t 4frames-migrate .   # migrations e seed (Job do cluster)
 ```
 
 A imagem do worker instala `ffmpeg` (como o projeto base), roda como usuário `node` e expõe a porta `9100`
@@ -207,8 +210,8 @@ recebe `400`.
 5. Quando `DONE`, `GET /videos/{jobId}/download` devolve uma URL pré-assinada de `GET` para o `.zip`.
 
 O processamento em si é feito pelo worker (ver [Worker](#worker)), e o `apps/notifier` manda o e-mail em
-`job.done`/`job.failed`. Ainda faltam, do ADR-002, o Ingress e o metrics-server no cluster e a observabilidade
-— ver "Known gaps" no [CLAUDE.md](./CLAUDE.md).
+`job.done`/`job.failed`. Ainda faltam, do ADR-002, o front dentro do cluster e a observabilidade — ver
+"Known gaps" no [CLAUDE.md](./CLAUDE.md).
 
 ## Worker
 

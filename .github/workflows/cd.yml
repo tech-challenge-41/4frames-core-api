@@ -45,6 +45,11 @@ jobs:
           docker build -f apps/notifier/Dockerfile \
             -t "4frames-notifier:${TAG}" \
             -t "${{ env.REGISTRY }}/${{ env.OWNER }}/4frames-notifier:${TAG}" .
+          # Migrations e seed (Job migrate). Publicada com as outras, mas não vai ao Kind do smoke: o overlay
+          # ci não tem Postgres e remove o Job.
+          docker build -f packages/shared/Dockerfile \
+            -t "4frames-migrate:${TAG}" \
+            -t "${{ env.REGISTRY }}/${{ env.OWNER }}/4frames-migrate:${TAG}" .
 
       - name: Push images to GHCR
         run: |
@@ -52,6 +57,7 @@ jobs:
           docker push "${{ env.REGISTRY }}/${{ env.OWNER }}/4frames-api:${TAG}"
           docker push "${{ env.REGISTRY }}/${{ env.OWNER }}/4frames-worker:${TAG}"
           docker push "${{ env.REGISTRY }}/${{ env.OWNER }}/4frames-notifier:${TAG}"
+          docker push "${{ env.REGISTRY }}/${{ env.OWNER }}/4frames-migrate:${TAG}"
 
       - name: Create Kind cluster
         uses: helm/kind-action@v1.14.0
