@@ -1,5 +1,5 @@
 # Entrada HTTP do cluster, no lugar do ALB do ADR-001. /api/* chega à API sem o prefixo:
-# /api/videos → /videos. O front entra por / quando rodar no cluster.
+# /api/videos → /videos. O resto vai para o front, pelo Ingress 4frames-web (web-ingress.yaml).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
