@@ -83,6 +83,22 @@ describe('http request logger', () => {
     expect(message).toBe('200 - GET /videos/1/events?token=[REDACTED]');
   });
 
+  it('should not log the kubelet probes', async () => {
+    const app = express();
+    app.use(createHttpRequestLoggerMiddleware());
+    app.use((_req, res) => {
+      res.status(200).json({ ok: true });
+    });
+
+    await request(app).get('/health-check');
+    await request(app).get('/ready');
+    await request(app).get('/videos');
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(mockLogLines).toHaveLength(1);
+    expect(mockLogLines[0]).toContain('GET /videos');
+  });
+
   it('should never write a JWT to the access log, from the header or from the SSE query string', async () => {
     const app = express();
     app.use(createHttpRequestLoggerMiddleware());
