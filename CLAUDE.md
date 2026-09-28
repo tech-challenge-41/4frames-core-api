@@ -26,6 +26,9 @@ packages/
       generated/  Prisma Client output (gitignored, created by `pnpm db:generate`)
 infra/localstack/init/             LocalStack bootstrap scripts
 infra/k8s/                         Kustomize: base (api + HPA, worker + KEDA, notifier, web, Ingress /api and /, migrate Job, expire-uploads CronJob), overlays local/ci, kind-config.yaml
+tests/e2e/     @4frames/e2e        end-to-end Jest suite against the running cluster (`pnpm test:e2e`; not part of `pnpm test`)
+tests/load/                        k6 scenarios (grafana/k6 container) + run-scenario.sh, sampler.mjs and chart.mjs → docs/evidence/<scenario>/
+docs/evidence/                     versioned results of the load scenarios (charts, pod timelines, counts)
 scripts/k8s-local.sh               the one command for the full stack: `up` (Compose infra, Kind, images incl. web from ../4frames-web-app, metrics-server, ingress-nginx, KEDA, migrate Job, overlay local, check through the Ingress), `down [--all]`
 .github/workflows/                 ci.yml (test→lint→type-check→k8s→build) + cd.yml (release-* → GHCR + Kind smoke)
 docs/adr/                          architecture decisions: ADR-001 (PDF, AWS design) + ADR-002 (local run, monorepo, UUID)
@@ -404,6 +407,8 @@ pnpm lint             # eslint for the whole repo (lint:fix to autofix); also fo
 pnpm format           # prettier for md/json/yml (format:check to verify)
 pnpm test             # jest in every package
 pnpm --filter @4frames/api test   # a single package
+pnpm test:e2e         # end to end against the cluster (./scripts/k8s-local.sh up first)
+tests/load/run-scenario.sh <name> <max workers> [--reduzir-no-meio]   # k6 peak + KEDA evidence (Git Bash on Windows)
 pnpm db:migrate       # prisma migrate dev (packages/shared)
 pnpm db:deploy        # prisma migrate deploy
 pnpm db:generate      # prisma generate

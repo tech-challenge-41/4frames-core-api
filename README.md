@@ -98,6 +98,8 @@ que mudou em relação ao ADR-001.
 | `packages/shared` | `@4frames/shared`   | Prisma (schema, migrations, seeds e client), env, logger, contratos de job, clientes AWS e Redis |
 | `infra/`          | –                   | LocalStack (`localstack/init`) e manifestos Kubernetes com Kustomize (`k8s/`)                    |
 | `scripts/`        | –                   | `k8s-local.sh`: cluster Kind local com a stack completa                                          |
+| `tests/e2e`       | `@4frames/e2e`      | Teste ponta a ponta contra a stack no cluster (`pnpm test:e2e`)                                  |
+| `tests/load`      | –                   | Cenários de carga com o k6 e a escala do worker pelo KEDA, com evidência em `docs/evidence/`     |
 
 A API segue arquitetura hexagonal em `apps/api/src`: `domain` (ports e erros), `application`
 (use cases e DTOs), `infra` (HTTP, serviços, logging) e `dependencies` (container de DI).
@@ -184,6 +186,7 @@ Layout dos manifestos, o que o script faz passo a passo e o deploy de uma tag `r
 | `pnpm lint` / `pnpm lint:fix`                               | ESLint no monorepo inteiro                                                    |
 | `pnpm format` / `pnpm format:check`                         | Prettier em Markdown, JSON e YAML (TypeScript é formatado pelo ESLint)        |
 | `pnpm test`                                                 | Testes de todos os pacotes                                                    |
+| `pnpm test:e2e`                                             | Teste ponta a ponta contra a stack no cluster (precisa do `k8s-local.sh up`)  |
 | `pnpm db:generate` / `db:migrate` / `db:deploy` / `db:seed` | Prisma no `@4frames/shared`                                                   |
 | `pnpm --filter @4frames/api expire --once`                  | Uma passada da expiração de uploads abandonados (sem `--once`, a cada minuto) |
 
@@ -338,6 +341,42 @@ Para rodá-los no container:
 ```bash
 docker compose exec worker pnpm --filter @4frames/worker test
 ```
+
+## Testes ponta a ponta e de carga
+
+Os dois rodam contra a stack no cluster, que precisa estar no ar (`./scripts/k8s-local.sh up`): eles não sobem
+nada. Os jobs ficam com o `user@user.com`, e a listagem do `admin@admin.com` não muda.
+
+**Ponta a ponta** (`tests/e2e`, Jest), pelo Ingress, como o navegador:
+
+- login, `POST /videos`, `PUT` direto no S3 e `complete`;
+- o progresso chega pelo SSE até o `job.done`, e o status termina em `DONE`;
+- o zip tem um PNG por segundo, na ordem e na raiz, e o e-mail chega ao Mailpit com o link do job;
+- um arquivo inválido termina em `FAILED`, com o motivo, e gera o e-mail de falha;
+- a listagem mostra os dois, e outro usuário recebe 404, como para um job que não existe.
+
+```bash
+pnpm test:e2e
+```
+
+`API_URL` e `MAILPIT_URL` apontam para outro ambiente; o padrão é `http://localhost:8080/api` e
+`http://localhost:8025`.
+
+**Carga e escala** (`tests/load`, com o k6 no container `grafana/k6`, sem instalar nada). O `run-scenario.sh`:
+
+- envia `VIDEOS` vídeos ao mesmo tempo (padrão 10), como pelo front (`uploads.js`);
+- mantém `USERS` usuários consultando a listagem a cada 3 s durante o pico (padrão 10, `listagem.js`);
+- grava em `docs/evidence/<cenário>/` a evolução dos workers, da fila e dos jobs, com um gráfico (`timeline.svg`) e um
+  resumo (`resumo.md`);
+- sai com erro se alguma requisição falhar ou se algum vídeo não chegar a `DONE`.
+
+```bash
+tests/load/run-scenario.sh 1-worker 1                            # o KEDA limitado a 1: um worker fixo
+tests/load/run-scenario.sh keda-ate-5 5                          # o KEDA de 1 a 5 workers
+tests/load/run-scenario.sh reducao-no-meio 5 --reduzir-no-meio   # o máximo cai para 1 com 5 vídeos em processamento
+```
+
+No Windows, rode no Git Bash. Os resultados e a comparação estão em [docs/evidence](./docs/evidence/README.md).
 
 ## Seeds
 
