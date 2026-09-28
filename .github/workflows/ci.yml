@@ -1,8 +1,9 @@
 name: CI
 
+# Toda PR, inclusive as empilhadas sobre outra branch: com o filtro de base, elas não passavam por CI, e a troca
+# da base para develop depois do merge da PR de baixo também não o disparava.
 on:
   pull_request:
-    branches: [develop, main]
   push:
     branches: [develop, main]
 
@@ -33,6 +34,13 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # Os testes de integração do worker rodam o ffmpeg de verdade e ficam skipped sem ele no PATH.
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -n 1
 
       - name: Test with coverage gate
         env:
