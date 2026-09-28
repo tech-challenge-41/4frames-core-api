@@ -10,10 +10,10 @@ EKS no ADR-001 (ver ADR-002).
 infra/k8s/
   kind-config.yaml   # cluster Kind local: portas 80 e 443 do Ingress publicadas no host em 8080 e 8443
   base/              # namespace 4frames, ConfigMap, Secret de desenvolvimento, os Deployments de api, worker,
-                     # notifier e front, os dois Ingress e o Job de migrations
+                     # notifier e front, os dois Ingress, o Job de migrations e o CronJob de expiração
   overlays/local/    # Kind local: infra do Compose no host, Secret gerado do .env
-  overlays/ci/       # Kind efêmero do CD: imagens :ci, um Redis para o notifier, sem o Job (não há Postgres) e
-                     # sem o front (a imagem é do 4frames-web-app)
+  overlays/ci/       # Kind efêmero do CD: imagens :ci, um Redis para o notifier, sem o Job e o CronJob (não há
+                     # Postgres) e sem o front (a imagem é do 4frames-web-app)
 ```
 
 | App      | Arquivos do `base`                                                                                               | Escala                                                      |
@@ -28,6 +28,18 @@ O `migrate-job.yaml` roda `prisma migrate deploy` e o seed com a imagem `4frames
 devDependencies do `@4frames/shared` e não entram nas imagens dos apps. O `spec.template` de um Job é
 imutável, então o Job é recriado a cada deploy. Rodar de novo é seguro: o `migrate deploy` só aplica o que
 falta, e o seed usa `upsert`. Terminado, o Job some sozinho em uma hora.
+
+O `expire-uploads-cronjob.yaml` roda a rotina de expiração a cada minuto, com a imagem da API e
+`node dist/cron/main.js --once`. Ela marca como `EXPIRED` os jobs em `UPLOAD_PENDING` cuja URL de upload
+venceu há mais de 60 s, e conta os `PROCESSING` sem escrita há 15 min. `concurrencyPolicy: Forbid` garante
+uma execução por vez, fora das réplicas da API. `activeDeadlineSeconds: 50` impede que uma passada presa
+segure as seguintes, e `backoffLimit: 0` deixa a nova tentativa para o minuto seguinte. Para rodar uma
+passada na hora:
+
+```bash
+kubectl -n 4frames create job --from=cronjob/expire-uploads expire-agora
+kubectl -n 4frames logs job/expire-agora
+```
 
 `api` e `worker` não fixam `replicas`: quem decide são o HPA e o KEDA. Worker e notifier têm liveness e
 readiness em `GET /healthz` na porta 9100. A API tem liveness em `GET /health-check` e readiness em
@@ -169,7 +181,8 @@ notifier só fica pronto com a assinatura de `jobs.events` ativa. Postgres e Loc
 cluster: o smoke prova que as imagens sobem e respondem saúde (`/health-check` da API, `/healthz` do worker e
 rollout do notifier), não o fluxo de vídeo. O Ingress do `base` é aplicado, mas o CD não instala o
 ingress-nginx nem o metrics-server: o smoke chega aos Services por `port-forward`. Sem Postgres, o overlay
-`ci` tira o Job de migrations; a imagem `4frames-migrate` é publicada no GHCR com as outras. O overlay também
+`ci` tira o Job de migrations e o CronJob de expiração; a imagem `4frames-migrate` é publicada no GHCR com as
+outras, e a expiração usa a imagem da API. O overlay também
 tira o Deployment do front: a imagem `4frames-web` vem do `4frames-web-app`, e este CD não a constrói. Sem ele,
 o pod ficaria em `ErrImagePull`. O Service `web` fica sem endpoints, o que não afeta o smoke. Por fim, a
 readiness da API volta a ser o `/health-check`: sem Postgres, o `/ready` responderia 503 para sempre, e o

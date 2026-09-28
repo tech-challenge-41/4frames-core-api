@@ -7,7 +7,7 @@ and a shared package. Read this before adding or changing any endpoint or packag
 
 ```
 apps/
-  api/          @4frames/api       Express 5 REST API (hexagonal, see "Layers" below)
+  api/          @4frames/api       Express 5 REST API (hexagonal, see "Layers" below) + src/cron: abandoned-upload expiration entrypoint
   worker/       @4frames/worker    SQS consumer + ffmpeg: frames, zip, job status and progress (see "Worker" below)
   notifier/     @4frames/notifier  Redis `jobs.events` subscriber, SMTP e-mail (Pug templates), recovery sweep, /healthz
 packages/
@@ -25,7 +25,7 @@ packages/
       health/     HealthServer: GET /healthz for the worker and notifier liveness probes
       generated/  Prisma Client output (gitignored, created by `pnpm db:generate`)
 infra/localstack/init/             LocalStack bootstrap scripts
-infra/k8s/                         Kustomize: base (api + HPA, worker + KEDA, notifier, web, Ingress /api and /, migrate Job), overlays local/ci, kind-config.yaml
+infra/k8s/                         Kustomize: base (api + HPA, worker + KEDA, notifier, web, Ingress /api and /, migrate Job, expire-uploads CronJob), overlays local/ci, kind-config.yaml
 scripts/k8s-local.sh               the one command for the full stack: `up` (Compose infra, Kind, images incl. web from ../4frames-web-app, metrics-server, ingress-nginx, KEDA, migrate Job, overlay local, check through the Ingress), `down [--all]`
 .github/workflows/                 ci.yml (test→lint→type-check→k8s→build) + cd.yml (release-* → GHCR + Kind smoke)
 docs/adr/                          architecture decisions: ADR-001 (PDF, AWS design) + ADR-002 (local run, monorepo, UUID)
@@ -247,6 +247,18 @@ producer, only a subscriber.
   `100` stored for an hour after `DONE`. It is best-effort: if Redis fails, the reader
   returns an empty map and the response goes out without `progress`.
 
+## Abandoned-upload expiration (`apps/api/src/cron`)
+
+- `ExpireAbandonedUploadsUseCase` marks `UPLOAD_PENDING` jobs created before
+  `now - (UPLOAD_URL_TTL_SECONDS + 60 s)` as `EXPIRED` with one conditional `updateMany` (status in the
+  `WHERE`, so a concurrent `complete` wins and reruns are harmless), and counts `PROCESSING` jobs with no
+  write for 15 min (log only; the worker writes to Postgres only on transitions, so progress does not
+  refresh `updated_at`).
+- `cron/main.ts` is a separate entrypoint in the API image, built without the `Container` (it only needs
+  Postgres): `--once` for one pass (the `expire-uploads` CronJob, every minute, `concurrencyPolicy: Forbid`,
+  removed from `overlays/ci`), or a 60 s loop with graceful shutdown for development (`ExpirationRunner`).
+  It must never run inside the API replicas.
+
 ## Readiness and graceful shutdown (API)
 
 - `GET /health-check` is liveness: the process is up, nothing else. `GET /ready` is readiness:
@@ -382,6 +394,7 @@ pnpm db:migrate       # prisma migrate dev (packages/shared)
 pnpm db:deploy        # prisma migrate deploy
 pnpm db:generate      # prisma generate
 pnpm db:seed          # seed test users
+pnpm --filter @4frames/api expire --once   # one pass of the abandoned-upload expiration (no --once: every minute)
 docker compose up -d --build                             # full stack, API in a container
 docker compose up -d postgres redis mailpit localstack   # infra only, apps via pnpm dev:*
 ```

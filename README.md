@@ -175,18 +175,37 @@ Layout dos manifestos, o que o script faz passo a passo e o deploy de uma tag `r
 
 ### Comandos (na raiz)
 
-| Comando                                                     | O que faz                                                              |
-| ----------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `pnpm dev:api` / `dev:worker` / `dev:notifier`              | Compila o `shared` e sobe o app com hot reload                         |
-| `pnpm dev:shared`                                           | Recompila o `shared` a cada mudança                                    |
-| `pnpm build`                                                | Compila todos os pacotes, na ordem de dependência                      |
-| `pnpm type-check`                                           | Type-check de todos os pacotes                                         |
-| `pnpm lint` / `pnpm lint:fix`                               | ESLint no monorepo inteiro                                             |
-| `pnpm format` / `pnpm format:check`                         | Prettier em Markdown, JSON e YAML (TypeScript é formatado pelo ESLint) |
-| `pnpm test`                                                 | Testes de todos os pacotes                                             |
-| `pnpm db:generate` / `db:migrate` / `db:deploy` / `db:seed` | Prisma no `@4frames/shared`                                            |
+| Comando                                                     | O que faz                                                                     |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `pnpm dev:api` / `dev:worker` / `dev:notifier`              | Compila o `shared` e sobe o app com hot reload                                |
+| `pnpm dev:shared`                                           | Recompila o `shared` a cada mudança                                           |
+| `pnpm build`                                                | Compila todos os pacotes, na ordem de dependência                             |
+| `pnpm type-check`                                           | Type-check de todos os pacotes                                                |
+| `pnpm lint` / `pnpm lint:fix`                               | ESLint no monorepo inteiro                                                    |
+| `pnpm format` / `pnpm format:check`                         | Prettier em Markdown, JSON e YAML (TypeScript é formatado pelo ESLint)        |
+| `pnpm test`                                                 | Testes de todos os pacotes                                                    |
+| `pnpm db:generate` / `db:migrate` / `db:deploy` / `db:seed` | Prisma no `@4frames/shared`                                                   |
+| `pnpm --filter @4frames/api expire --once`                  | Uma passada da expiração de uploads abandonados (sem `--once`, a cada minuto) |
 
 Para um pacote só, use `--filter`, por exemplo `pnpm --filter @4frames/api test`.
+
+### Expiração de uploads abandonados
+
+Um job criado com `POST /videos` cujo upload nunca foi confirmado fica em `UPLOAD_PENDING`. Quando a URL
+de upload vence (`UPLOAD_URL_TTL_SECONDS`, 5 min) e passa mais 60 s de folga, a rotina de expiração o marca
+como `EXPIRED`. Ela também conta, e registra no log, os jobs em `PROCESSING` sem nenhuma escrita há mais de
+15 min, sinal de worker parado.
+
+A rotina é um entrypoint separado na imagem da API (`dist/cron/main.js`), fora das réplicas dela, e roda uma
+execução por vez:
+
+- No cluster, é o CronJob `expire-uploads`, a cada minuto, com `concurrencyPolicy: Forbid` e `--once`.
+- No desenvolvimento, com os apps no host: `pnpm --filter @4frames/api expire --once` para uma passada, ou
+  sem `--once` para uma passada por minuto até o Ctrl+C.
+- Com tudo no Docker: `docker compose exec api pnpm --filter @4frames/api expire --once`.
+
+A escrita é condicional (`UPLOAD_PENDING` no `WHERE`): um job que o `complete` levou a `QUEUED` no mesmo
+instante não expira, e rodar a rotina duas vezes não muda nada.
 
 ## LocalStack (S3 e SQS)
 
