@@ -104,6 +104,7 @@ BREAKING CHANGE: jobId passa a ser string (uuid) em todas as rotas de /videos.
 - Escreva em português, o idioma da documentação do projeto.
 - A primeira linha tem no máximo 72 caracteres.
 - Um commit, uma ideia. Não misture refatoração com funcionalidade nova.
+- Não cite cards do kanban, nem na primeira linha nem no corpo: nada de "Card 4" ou "fecha o Card 12". Descreva pelo requisito ou pelo comportamento. Como no nome da branch, o número do card não significa nada para quem lê o histórico do git.
 - Use `!` depois do tipo e o rodapé `BREAKING CHANGE:` quando a mudança quebrar o contrato da API, o schema do banco ou as variáveis de ambiente.
 
 ## Hook de pre-commit
@@ -160,6 +161,7 @@ Quando se aplicar:
 
 - A base é `develop`. Só o PR de release usa `main`.
 - O título segue o formato de commit, por exemplo `feat(api): download pré-assinado do zip`.
+- Título e corpo seguem a regra dos commits: sem citar cards do kanban, descrevendo pelo requisito ou pelo comportamento.
 - Preencha o template: o que muda, por que e como testar.
 - Um assunto por PR. Acima de cerca de 400 linhas alteradas, sem contar renomeações, lockfile e arquivos gerados, considere dividir.
 - Trabalho em andamento vai como _draft_.
