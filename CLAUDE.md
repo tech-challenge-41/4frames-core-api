@@ -72,6 +72,8 @@ application/
   use-case/<aggregate>/<action>/<action>.usecase.ts + .dto.ts
   error/*.ts                     ApplicationError subclasses (HTTP-facing errors)
 infra/
+  http/http-app.ts                                        createHttpApp: the Express app (middlewares, routes, Swagger, error handler)
+  http/http-initialize.ts                                 starts the Container, graceful shutdown and the listener
   http/controller/<aggregate>/<aggregate>.controller.ts   implements IController
   http/route/<aggregate>.ts                               Express Router
   http/validators/<aggregate>/*.validator.ts              Zod schemas
@@ -124,7 +126,9 @@ relative to `apps/api/src`.
 5. **Route**: wire it into the aggregate's existing `infra/http/route/<aggregate>.ts`.
    Apply `authMiddleware` for any route requiring a logged-in user, then
    `validateMiddleware(schema)` if there's a body schema, then
-   `controllerWrapper(YourController.name)`.
+   `controllerWrapper(YourController.name)`. A new router is mounted through `apiRouters` in
+   `infra/http/route/index.ts`, never straight on the app: Express 5 does not keep a mount prefix as
+   text, and the OpenAPI parity test reads the prefixes from that list.
 6. **Register in the Container**: add the service to `infra.dependency.ts` (if new),
    the use case to `use-case.dependency.ts` (resolving its dependencies via
    `c.resolve(ServiceClass.name)`), and the controller to `controller.dependency.ts`
@@ -132,8 +136,12 @@ relative to `apps/api/src`.
    a string literal.
 7. **OpenAPI docs**: add a path file under `infra/http/docs/paths/<aggregate>/`,
    register it in that folder's `index.ts` and in `infra/http/docs/openapi.ts`.
-   Reuse `docs/responses/*.ts` (bad-request, unauthorized, not-found,
-   too-many-requests) instead of inlining response schemas.
+   Both go through `mergePaths`: two path files may share a key (`POST` and `GET /videos`),
+   and a plain object spread would silently drop the first operation. Reuse
+   `docs/responses/*.ts` (bad-request, unauthorized, not-found, too-many-requests)
+   instead of inlining response schemas. `infra/http/__tests__/openapi-parity.spec.ts`
+   fails when a route registered in Express has no OpenAPI operation, or the other way
+   around; `GET /api-docs` (the docs UI itself) is the only exception.
 8. **Tests**: `.spec.ts` next to the use case, and under `__tests__/` next to the
    controller (matches the existing layout — use case specs are siblings, controller
    specs are in a subfolder). Mock dependencies as plain Jest mocks matching the
@@ -142,6 +150,11 @@ relative to `apps/api/src`.
    (see `user-authenticator.service.spec.ts`).
    Cover: happy path, not-found/wrong-owner (same error/response either way — see
    "Authorization" below), and any domain-specific invalid-state transitions.
+   HTTP tests (supertest) go through the real app from `createHttpApp()`, which needs no
+   Container or port: mock `Container.getInstance` so `resolve` hands back the real
+   `JwtAuthenticatorService` and the real controllers with mocked use cases, set
+   `JWT_SECRET_KEY` and sign the token with `jsonwebtoken`. See
+   `infra/http/route/__tests__/video.spec.ts`, which also reads the SSE route as a stream.
 
 ## Database (Prisma)
 
