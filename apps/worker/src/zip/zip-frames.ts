@@ -7,13 +7,15 @@ import { type FrameZipper, type ZipFramesInput } from '../processing/ports';
 
 /**
  * Zip em streaming para arquivo. Como no projeto base, as entradas ficam na raiz do zip (sem pastas),
- * com Deflate.
+ * com Deflate, na ordem dos frames.
  */
 export class ArchiverFrameZipper implements FrameZipper {
   public zip({ framesDir, frameFiles, zipPath }: ZipFramesInput): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       const output = fs.createWriteStream(zipPath);
-      const archive = archiver('zip', { zlib: { level: 6 } });
+      // O archiver grava cada arquivo quando o lstat dele termina, e por padrão faz 4 em paralelo: os frames
+      // entrariam no zip fora de ordem. Um lstat por vez custa milissegundos perto da extração.
+      const archive = archiver('zip', { zlib: { level: 6 }, statConcurrency: 1 });
 
       const fail = (error: Error) => {
         archive.abort();
