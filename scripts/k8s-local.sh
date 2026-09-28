@@ -437,7 +437,7 @@ cmd_down() {
 
 cmd_logs() {
   kubectl config use-context "kind-$CLUSTER_NAME"
-  for app in "${APPS[@]}" migrate; do
+  for app in "${APPS[@]}" migrate expire-uploads; do
     echo "=== $app ==="
     kubectl -n "$NAMESPACE" logs -l "app.kubernetes.io/name=$app" --tail=50 || true
   done
@@ -445,7 +445,7 @@ cmd_logs() {
 
 cmd_status() {
   kubectl config use-context "kind-$CLUSTER_NAME"
-  kubectl -n "$NAMESPACE" get pods,jobs,svc,ingress,hpa
+  kubectl -n "$NAMESPACE" get pods,jobs,cronjobs,svc,ingress,hpa
   kubectl -n "$NAMESPACE" get scaledobjects.keda.sh 2>/dev/null || true
   kubectl -n "$NAMESPACE" top pods 2>/dev/null \
     || echo '(metrics-server sem dados ainda: a primeira coleta leva perto de um minuto)'

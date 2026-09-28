@@ -1,0 +1,48 @@
+# Rotina de expiração de uploads abandonados (ADR-001 §2.3): UPLOAD_PENDING cuja URL de upload venceu há mais
+# de 60 s vira EXPIRED. Roda com a imagem da API, fora das réplicas dela, uma execução por vez.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: expire-uploads
+  namespace: 4frames
+  labels:
+    app.kubernetes.io/name: expire-uploads
+    app.kubernetes.io/part-of: 4frames
+spec:
+  # A cada minuto: um upload abandonado expira entre 6 e 7 min depois de criado (URL de 5 min + 60 s + 1 min).
+  schedule: '* * * * *'
+  # Nunca duas passadas juntas. Se uma atrasar, a do minuto seguinte é pulada, não empilhada.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 30
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # A próxima passada já é a nova tentativa.
+      backoffLimit: 0
+      # Uma passada leva segundos; esta é a trava para uma conexão presa não segurar o Forbid para sempre.
+      activeDeadlineSeconds: 50
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: expire-uploads
+            app.kubernetes.io/part-of: 4frames
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: expire-uploads
+              image: 4frames-api:local
+              imagePullPolicy: IfNotPresent
+              command: ['node', 'dist/cron/main.js', '--once']
+              envFrom:
+                - configMapRef:
+                    name: 4frames-config
+                - secretRef:
+                    name: 4frames-secret
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 64Mi
+                limits:
+                  cpu: 250m
+                  memory: 256Mi

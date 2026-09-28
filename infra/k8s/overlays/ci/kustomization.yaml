@@ -14,6 +14,14 @@ patches:
       metadata:
         name: migrate
         namespace: 4frames
+  # A expiração também só fala com o Postgres: sem ele, cada passada falharia.
+  - patch: |-
+      $patch: delete
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata:
+        name: expire-uploads
+        namespace: 4frames
   # A imagem 4frames-web é do 4frames-web-app e não é construída aqui: o pod ficaria em ErrImagePull. O Service
   # web fica sem endpoints e o Ingress sem controller, como o da API, e o smoke não passa por nenhum dos dois.
   - patch: |-
