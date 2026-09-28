@@ -254,9 +254,10 @@ A imagem do worker instala `ffmpeg` (como o projeto base), roda como usuário `n
 
 ## CI/CD (GitHub Actions)
 
-- **CI** (`.github/workflows/ci.yml`), em PR e push para `develop`/`main`: `test` (com gate de cobertura Jest, sem
-  SonarCloud) → `lint` → `type-check` → validação dos manifestos Kubernetes → build das imagens `api`, `worker` e
-  `notifier`.
+- **CI** (`.github/workflows/ci.yml`), em toda PR, inclusive as empilhadas sobre outra branch, e em push para
+  `develop`/`main`: `test` (com gate de cobertura Jest, sem SonarCloud, e com ffmpeg, para os testes de integração do
+  worker) → `lint` → `type-check` → validação dos manifestos Kubernetes → build das imagens `api`, `worker`,
+  `notifier` e `migrate`.
 - **CD** (`.github/workflows/cd.yml`), em tag `release-*`: publica as imagens versionadas no GHCR, sobe um cluster Kind
   efêmero com o KEDA, aplica `infra/k8s/overlays/ci` e roda smoke (`/health-check`, `/healthz`, rollout do notifier).
 
@@ -265,7 +266,8 @@ Regras de merge (CI verde + revisão de outra pessoa, sem branch protection no p
 
 ## Endpoints
 
-- `POST /auth` — autenticação por email e senha
+- `POST /auth/login` — autenticação por email e senha (`POST /auth` continua respondendo igual, marcada como
+  _deprecated_ no OpenAPI)
 - `POST /videos` — cria um job de conversão (`UPLOAD_PENDING`) e devolve uma URL pré-assinada de upload ao S3
 - `GET /videos` — lista os jobs do usuário autenticado, paginado (`limit`/`offset`), mais recentes primeiro,
   com o percentual (`progress`) dos jobs em `PROCESSING`

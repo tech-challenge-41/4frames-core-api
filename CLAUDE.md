@@ -351,7 +351,8 @@ storage/ zip/ repo/ progress/ S3 (lib-storage), archiver, Prisma, Redis publishe
   Each job spawns its own ffmpeg; temp files are isolated under `WORKER_TMP_DIR/{jobId}`. In Compose, tune
   `WORKER_MAX_PARALLEL_JOBS` and/or `docker compose up --scale worker=N`. Production scaling is still KEDA réplicas per ADR-002.
 - Tests: unit specs next to the code (fake runner for ffmpeg, fake SQS client). `test/integration` runs real
-  ffmpeg on `test/fixtures` and skips when ffmpeg is not in PATH (run them inside the worker container).
+  ffmpeg on `test/fixtures` and skips when ffmpeg is not in PATH (run them inside the worker container). CI installs
+  ffmpeg in the `test` job, so they run there.
 
 ## Docker
 
@@ -431,9 +432,6 @@ ordered by `created_at desc`).
 
 - `correlation_id` on `video_jobs` is still unused for correlated logging across
   api/worker/notifier (field exists; propagation not wired end-to-end).
-- `POST /auth` vs. the ADR's documented `POST /auth/login` — the route name
-  never got reconciled with the ADR text; not a functional issue, just a doc
-  mismatch to be aware of.
 
 **Infrastructure-level (per ADR-002):**
 
