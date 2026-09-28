@@ -11,6 +11,11 @@ const routes = Router();
 
 routes.use(getRateLimiterMiddleware());
 
-routes.post('/', validateMiddleware(authUserSchema), controllerWrapper(AuthController.name));
+const authenticate = [validateMiddleware(authUserSchema), controllerWrapper(AuthController.name)];
+
+// POST /auth/login é a rota do ADR-001. POST /auth continua respondendo igual para quem já a usa e aparece
+// como deprecated no OpenAPI. As duas passam pelo mesmo rate limiter.
+routes.post('/login', ...authenticate);
+routes.post('/', ...authenticate);
 
 export { routes };

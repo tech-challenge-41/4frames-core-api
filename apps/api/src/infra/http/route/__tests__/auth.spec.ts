@@ -96,4 +96,25 @@ describe('Auth Route Integration Tests', () => {
       expect(mockUseCase.execute).toHaveBeenCalled();
     });
   });
+
+  describe('POST /auth/login', () => {
+    it('should authenticate with the same controller as POST /auth', async () => {
+      const mockResult: AuthenticateUserOutputDTO = {
+        accessToken: 'jwt-token-456',
+        expireIn: 3600,
+        user: { id: 'user-id-123', email: 'test@example.com' }
+      };
+      mockUseCase.execute.mockResolvedValue(mockResult);
+
+      const response = await request(createApp()).post('/auth/login').send({
+        email: 'test@example.com',
+        password: 'password123'
+      });
+
+      expect(response.status).toBe(201);
+      expect(response.body).toEqual(mockResult);
+      expect(mockUseCase.execute).toHaveBeenCalledWith({ email: 'test@example.com', password: 'password123' });
+      expect(containerInstance.resolve).toHaveBeenCalledWith(AuthController.name);
+    });
+  });
 });
