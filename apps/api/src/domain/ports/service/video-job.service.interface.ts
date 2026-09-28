@@ -42,4 +42,12 @@ export interface IVideoJobService {
    * quando a condição não bateu — job de outro dono, inexistente, ou já capturado pelo worker.
    */
   cancelIfPending(jobId: string, userId: number): Promise<VideoJobRecord | null>;
+  /**
+   * Marca como EXPIRED, numa única escrita condicional, os jobs ainda em UPLOAD_PENDING criados antes de
+   * `createdBefore`. Um job que o `complete` levou a QUEUED no mesmo instante fica de fora. Devolve quantos
+   * expiraram.
+   */
+  expireUploadPendingCreatedBefore(createdBefore: Date): Promise<number>;
+  /** Quantos jobs estão em PROCESSING sem nenhuma escrita desde `updatedBefore`: worker parado ou travado. */
+  countProcessingNotUpdatedSince(updatedBefore: Date): Promise<number>;
 }

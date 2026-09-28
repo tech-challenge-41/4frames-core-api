@@ -68,6 +68,22 @@ export class VideoJobService implements IVideoJobService {
     return this.findById(jobId);
   }
 
+  public async expireUploadPendingCreatedBefore(createdBefore: Date): Promise<number> {
+    // O status no WHERE: se o complete já levou o job a QUEUED, ele não expira.
+    const { count } = await prisma.video_jobs.updateMany({
+      where: { status: 'UPLOAD_PENDING', created_at: { lt: createdBefore } },
+      data: { status: 'EXPIRED' }
+    });
+
+    return count;
+  }
+
+  public async countProcessingNotUpdatedSince(updatedBefore: Date): Promise<number> {
+    return prisma.video_jobs.count({
+      where: { status: 'PROCESSING', updated_at: { lt: updatedBefore } }
+    });
+  }
+
   public async listByUser(userId: number, { limit, offset }: ListByUserPagination): Promise<ListByUserResult> {
     const [jobs, total] = await Promise.all([
       prisma.video_jobs.findMany({

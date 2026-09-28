@@ -9,9 +9,11 @@
   ],
   "scripts": {
     "dev": "ts-node-dev -r tsconfig-paths/register --respawn --transpile-only src/main.ts",
+    "expire": "ts-node-dev -r tsconfig-paths/register --transpile-only src/cron/main.ts",
     "build": "tsc && tsc-alias",
     "type-check": "tsc --noEmit",
     "start": "node dist/main.js",
+    "start:expire": "node dist/cron/main.js",
     "test": "jest --coverage",
     "test:watch": "jest --watch"
   },

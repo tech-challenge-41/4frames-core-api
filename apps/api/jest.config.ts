@@ -22,6 +22,7 @@ const config: Config = {
     'src/infra/http/http-initialize.ts',
     'src/infra/http/route/index.ts',
     'src/main.ts',
+    'src/cron/main.ts',
     'src/types.d.ts'
   ],
   // Gate de cobertura do CI (sem SonarCloud). Subir conforme a cobertura crescer.
