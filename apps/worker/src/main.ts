@@ -12,6 +12,7 @@ import { createRedisClient } from '@4frames/shared/redis';
 import { parseWorkerEnv } from './config/worker-env';
 import { createDlqHandler } from './consumer/dlq-handler';
 import { SqsConsumer } from './consumer/sqs-consumer';
+import { SqsUploadRequeuer } from './consumer/upload-requeuer';
 import { createVideoUploadHandler } from './consumer/video-upload-handler';
 import { FfmpegFrameExtractor } from './ffmpeg/extract-frames';
 import { FfprobeVideoProbe } from './ffmpeg/ffprobe';
@@ -93,7 +94,12 @@ async function bootstrap(): Promise<void> {
         name: 'dlq',
         sqs,
         queueUrl: env.SQS_DLQ_URL,
-        handler: createDlqHandler({ repository, publisher, logger }),
+        handler: createDlqHandler({
+          repository,
+          publisher,
+          requeuer: new SqsUploadRequeuer({ sqs, queueUrl: env.SQS_QUEUE_URL }),
+          logger
+        }),
         logger,
         visibilityTimeoutSeconds: DLQ_VISIBILITY_TIMEOUT_SECONDS
       })

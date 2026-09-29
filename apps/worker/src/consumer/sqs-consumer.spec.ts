@@ -103,7 +103,8 @@ describe('SqsConsumer', () => {
       MaxNumberOfMessages: 1,
       WaitTimeSeconds: 20,
       VisibilityTimeout: 600,
-      MessageSystemAttributeNames: ['ApproximateReceiveCount']
+      MessageSystemAttributeNames: ['ApproximateReceiveCount'],
+      MessageAttributeNames: ['All']
     });
   });
 
