@@ -212,8 +212,8 @@ kubectl -n 4frames wait --for=condition=complete job/migrate --timeout=300s
 kubectl -n 4frames rollout restart deploy/api deploy/worker deploy/notifier
 ```
 
-O front fica de fora: a imagem `4frames-web` é do `4frames-web-app` e ainda não é publicada no GHCR. O `up` a
-constrói a partir do clone.
+O front fica de fora: a imagem `4frames-web` é publicada pelo CD do `4frames-web-app`, não por este. O `up` a constrói a
+partir do clone.
 
-O `base/secret.yaml` tem valores de desenvolvimento (iguais ao `.env.example`), usados só pelo overlay `ci`.
+O `base/secret.yaml` tem valores de desenvolvimento, usados só pelo overlay `ci`.
 Não use em produção.

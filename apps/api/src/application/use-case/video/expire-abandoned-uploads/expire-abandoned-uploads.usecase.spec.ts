@@ -25,7 +25,7 @@ describe('ExpireAbandonedUploadsUseCase', () => {
     videoJobService = {
       createUploadPendingJob: jest.fn(),
       findById: jest.fn(),
-      updateStatus: jest.fn(),
+      queueIfUploadPending: jest.fn(),
       listByUser: jest.fn(),
       cancelIfPending: jest.fn(),
       expireUploadPendingCreatedBefore: jest.fn().mockResolvedValue(0),

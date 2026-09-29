@@ -19,6 +19,7 @@
     "format": "prettier --write \"**/*.{md,json,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{md,json,yml,yaml}\"",
     "test": "pnpm -r --if-present test",
+    "test:e2e": "pnpm --filter @4frames/e2e e2e",
     "dev:shared": "pnpm --filter @4frames/shared dev",
     "dev:api": "pnpm --filter @4frames/shared build && pnpm --filter @4frames/api dev",
     "dev:worker": "pnpm --filter @4frames/shared build && pnpm --filter @4frames/worker dev",

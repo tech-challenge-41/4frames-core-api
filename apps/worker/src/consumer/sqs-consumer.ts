@@ -192,7 +192,9 @@ export class SqsConsumer {
           MaxNumberOfMessages: Math.max(1, Math.min(maxMessages, 10)),
           WaitTimeSeconds: this.waitTimeSeconds,
           VisibilityTimeout: this.visibilityTimeoutSeconds,
-          MessageSystemAttributeNames: ['ApproximateReceiveCount']
+          MessageSystemAttributeNames: ['ApproximateReceiveCount'],
+          // O contador de reenvios da DLQ (upload-requeuer.ts) viaja num atributo da mensagem.
+          MessageAttributeNames: ['All']
         }),
         { abortSignal: abort.signal }
       );
