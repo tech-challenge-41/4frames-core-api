@@ -1,4 +1,4 @@
-import { prisma, type video_jobs, type VideoJobStatus } from '@4frames/shared/prisma';
+import { prisma, type video_jobs } from '@4frames/shared/prisma';
 
 import {
   type CreateUploadPendingJobInput,
@@ -40,13 +40,19 @@ export class VideoJobService implements IVideoJobService {
     return this.toRecord(job);
   }
 
-  public async updateStatus(jobId: string, status: string): Promise<VideoJobRecord> {
-    const job = await prisma.video_jobs.update({
-      where: { id: jobId },
-      data: { status: status as VideoJobStatus }
+  public async queueIfUploadPending(jobId: string, userId: number): Promise<VideoJobRecord | null> {
+    // updateMany (não update) para a condição de status entrar no WHERE: um cancelamento ou a rotina de
+    // expiração que levou o job a EXPIRED entre o findById do use case e esta chamada não é sobrescrito.
+    const { count } = await prisma.video_jobs.updateMany({
+      where: { id: jobId, user_id: userId, status: 'UPLOAD_PENDING' },
+      data: { status: 'QUEUED' }
     });
 
-    return this.toRecord(job);
+    if (count !== 1) {
+      return null;
+    }
+
+    return this.findById(jobId);
   }
 
   public async cancelIfPending(jobId: string, userId: number): Promise<VideoJobRecord | null> {
