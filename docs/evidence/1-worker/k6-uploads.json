@@ -1,0 +1,171 @@
+{
+  "root_group": {
+    "groups": {},
+    "checks": {
+      "POST /videos → 201": {
+        "id": "b4dfcc29fac471bbb10481c684d6867b",
+        "passes": 10,
+        "fails": 0,
+        "name": "POST /videos → 201",
+        "path": "::POST /videos → 201"
+      },
+      "PUT no S3 → 200": {
+        "name": "PUT no S3 → 200",
+        "path": "::PUT no S3 → 200",
+        "id": "6d515e74345f70512c1bb90dd6e9efa7",
+        "passes": 10,
+        "fails": 0
+      },
+      "POST /complete → 200 QUEUED": {
+        "passes": 10,
+        "fails": 0,
+        "name": "POST /complete → 200 QUEUED",
+        "path": "::POST /complete → 200 QUEUED",
+        "id": "0a4630f07809ced1639ed701b62efbf7"
+      }
+    },
+    "name": "",
+    "path": "",
+    "id": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "metrics": {
+    "data_received": {
+      "count": 16378,
+      "rate": 1014.1341738037647
+    },
+    "iteration_duration": {
+      "max": 16007.129322,
+      "min": 5965.858402,
+      "med": 15771.8499245,
+      "avg": 14327.8353177,
+      "p(95)": 16004.6344824
+    },
+    "http_req_duration{name:PUT S3 (URL pré-assinada)}": {
+      "avg": 14001.391292999999,
+      "p(95)": 15765.91342335,
+      "max": 15778.891296,
+      "min": 5523.749711,
+      "med": 15435.1586345,
+      "thresholds": {
+        "p(95)<120000": false
+      }
+    },
+    "http_req_duration{expected_response:true}": {
+      "min": 23.112378,
+      "med": 85.346363,
+      "avg": 4564.402769741935,
+      "p(95)": 15735.4406935,
+      "max": 15778.891296
+    },
+    "http_req_connecting": {
+      "min": 0,
+      "med": 5.10513,
+      "avg": 6.273699,
+      "p(95)": 18.00841,
+      "max": 32.489718
+    },
+    "http_req_failed": {
+      "passes": 0,
+      "fails": 31,
+      "thresholds": {
+        "rate==0": false
+      },
+      "value": 0
+    },
+    "http_req_tls_handshaking": {
+      "min": 0,
+      "med": 0,
+      "avg": 0,
+      "p(95)": 0,
+      "max": 0
+    },
+    "http_req_duration": {
+      "min": 23.112378,
+      "med": 85.346363,
+      "avg": 4564.402769741935,
+      "p(95)": 15735.4406935,
+      "max": 15778.891296
+    },
+    "http_req_receiving": {
+      "min": 0.096098,
+      "med": 0.154231,
+      "avg": 0.22842612903225804,
+      "p(95)": 0.7251505,
+      "max": 0.963899
+    },
+    "vus": {
+      "value": 6,
+      "min": 6,
+      "max": 10
+    },
+    "vus_max": {
+      "value": 10,
+      "min": 10,
+      "max": 10
+    },
+    "checks": {
+      "passes": 30,
+      "fails": 0,
+      "thresholds": {
+        "rate==1": false
+      },
+      "value": 1
+    },
+    "http_req_waiting": {
+      "min": 22.91914,
+      "med": 85.048408,
+      "avg": 528.7991732258064,
+      "p(95)": 1917.2706585,
+      "max": 2056.648188
+    },
+    "http_req_sending": {
+      "p(95)": 14694.095862,
+      "max": 14842.377857,
+      "min": 0.02162,
+      "med": 0.068543,
+      "avg": 4035.375170387097
+    },
+    "iterations": {
+      "count": 10,
+      "rate": 0.619205137259595
+    },
+    "http_req_duration{name:POST /videos/:jobId/complete}": {
+      "min": 34.873162,
+      "med": 64.97697099999999,
+      "avg": 70.87211269999999,
+      "p(95)": 124.07323294999999,
+      "max": 127.44155,
+      "thresholds": {
+        "p(95)<5000": false
+      }
+    },
+    "http_reqs": {
+      "count": 31,
+      "rate": 1.9195359255047446
+    },
+    "http_req_blocked": {
+      "min": 0.007482,
+      "med": 5.272605,
+      "avg": 6.415151580645162,
+      "p(95)": 18.241388,
+      "max": 33.01515
+    },
+    "data_sent": {
+      "count": 344895313,
+      "rate": 21356094.9626356
+    },
+    "http_req_duration{name:POST /videos}": {
+      "min": 23.112378,
+      "med": 44.506033,
+      "avg": 67.20571299999999,
+      "p(95)": 172.72323695,
+      "max": 174.536264,
+      "thresholds": {
+        "p(95)<5000": false
+      }
+    }
+  },
+  "setup_data": {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjIsImlhdCI6MTc5MDYwNjQyMSwiZXhwIjoxNzkwNjI4MDIxfQ.CF4-PVHo2oCcuoGE5UImZDPg0wKGMKcNbHW0_L7r5rM"
+  }
+}

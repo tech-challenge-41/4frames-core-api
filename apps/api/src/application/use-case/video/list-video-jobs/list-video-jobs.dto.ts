@@ -13,6 +13,8 @@ export interface VideoJobListItemDTO {
   failureReason?: string;
   /** true quando o job está DONE e tem um .zip disponível para download. */
   hasDownload: boolean;
+  /** Percentual (0–100) do processamento. Só em PROCESSING, e só depois de o worker publicar o primeiro. */
+  progress?: number;
 }
 
 export interface ListVideoJobsOutputDTO {

@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 658" width="960" height="658" role="img" aria-labelledby="t d">
+<title id="t">10 vídeos ao mesmo tempo, com o KEDA limitado a 5 workers</title>
+<desc id="d">10 de 10 concluídos  ·  drenagem em 100 s  ·  pico de 5 workers  ·  0 requisições com erro. Dados em replicas.log, pods-events.log, queue.csv, jobs.csv e events.log.</desc>
+<style>
+  svg { --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781; --grid: #e1e0d9; --axis: #c3c2b7;
+        --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; }
+  @media (prefers-color-scheme: dark) {
+    svg { --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781; --grid: #2c2c2a; --axis: #383835;
+          --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; }
+  }
+  text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; fill: var(--ink-2); font-size: 12px; }
+  .title { fill: var(--ink); font-size: 18px; font-weight: 600; }
+  .subtitle { font-size: 13px; }
+  .panel-title { fill: var(--ink); font-size: 13px; font-weight: 600; }
+  .tick, .caption { fill: var(--muted); font-variant-numeric: tabular-nums; }
+  .end { fill: var(--ink); font-weight: 600; }
+  .grid { stroke: var(--grid); stroke-width: 1; }
+  .baseline, .mark { stroke: var(--axis); stroke-width: 1; }
+  .mark-dot { fill: var(--surface); stroke: var(--axis); stroke-width: 1; }
+  .mark-n { fill: var(--ink-2); font-size: 10px; font-weight: 600; }
+  path, line[class^="s"] { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .dot { stroke: var(--surface); stroke-width: 2; }
+  .s1 { stroke: var(--s1); } .s2 { stroke: var(--s2); } .s3 { stroke: var(--s3); }
+  .s4 { stroke: var(--s4); } .s5 { stroke: var(--s5); }
+  circle.s1 { fill: var(--s1); } circle.s3 { fill: var(--s3); }
+</style>
+<rect width="100%" height="100%" fill="var(--surface)"/>
+<text class="title" x="56" y="36">10 vídeos ao mesmo tempo, com o KEDA limitado a 5 workers</text>
+<text class="subtitle" x="56" y="60">10 de 10 concluídos  ·  drenagem em 100 s  ·  pico de 5 workers  ·  0 requisições com erro</text>
+<line class="mark" x1="122.34386699892858" x2="122.34386699892858" y1="156" y2="306"/><line class="mark" x1="122.34386699892858" x2="122.34386699892858" y1="390" y2="540"/><circle class="mark-dot" cx="122.34386699892858" cy="88" r="8"/><text class="mark-n" x="122.34386699892858" y="92" text-anchor="middle">1</text>
+<line class="mark" x1="369.34444083290197" x2="369.34444083290197" y1="156" y2="306"/><line class="mark" x1="369.34444083290197" x2="369.34444083290197" y1="390" y2="540"/><circle class="mark-dot" cx="369.34444083290197" cy="88" r="8"/><text class="mark-n" x="369.34444083290197" y="92" text-anchor="middle">2</text>
+<line class="mark" x1="439.0407502377599" x2="439.0407502377599" y1="156" y2="306"/><line class="mark" x1="439.0407502377599" x2="439.0407502377599" y1="390" y2="540"/><circle class="mark-dot" cx="439.0407502377599" cy="88" r="8"/><text class="mark-n" x="439.0407502377599" y="92" text-anchor="middle">3</text>
+<text class="panel-title" x="56" y="114">Workers (réplicas do Deployment, decididas pelo KEDA)</text>
+<line class="s1" x1="56" x2="72" y1="132" y2="132"/><text class="legend" x="78" y="136">workers prontos</text>
+<line class="s2" x1="207" x2="223" y1="132" y2="132"/><text class="legend" x="229" y="136">workers em encerramento</text>
+<line class="baseline" x1="56" x2="810" y1="306" y2="306"/><text class="tick" x="48" y="310" text-anchor="end">0</text>
+<line class="grid" x1="56" x2="810" y1="276" y2="276"/><text class="tick" x="48" y="280" text-anchor="end">1</text>
+<line class="grid" x1="56" x2="810" y1="246" y2="246"/><text class="tick" x="48" y="250" text-anchor="end">2</text>
+<line class="grid" x1="56" x2="810" y1="216" y2="216"/><text class="tick" x="48" y="220" text-anchor="end">3</text>
+<line class="grid" x1="56" x2="810" y1="186" y2="186"/><text class="tick" x="48" y="190" text-anchor="end">4</text>
+<line class="grid" x1="56" x2="810" y1="156" y2="156"/><text class="tick" x="48" y="160" text-anchor="end">5</text>
+<path class="s1" d="M56.0,276.0H111.9V276.0H112.2V276.0H112.4V276.0H112.5V276.0H145.1V246.0H157.6V246.0H157.8V246.0H157.9V246.0H158.5V246.0H176.2V216.0H176.3V186.0H176.6V156.0H385.9V156.0H386.0V156.0H386.1V216.0H387.3V216.0H387.4V216.0H431.3V216.0H431.4V216.0H431.6V276.0H432.5V276.0H432.7V276.0H810.0"><title>workers prontos</title></path>
+<text class="end" x="182.6062335223374" y="150">pico: 5</text>
+<path class="s2" d="M56.0,306.0H112.1V306.0H112.2V306.0H112.4V306.0H114.9V306.0H115.5V306.0H128.5V306.0H128.6V306.0H144.9V306.0H157.9V306.0H158.0V306.0H158.1V306.0H158.1V306.0H158.3V306.0H158.3V306.0H158.3V306.0H158.5V306.0H158.6V306.0H160.7V306.0H160.9V306.0H161.1V306.0H161.8V306.0H162.2V306.0H162.6V306.0H174.5V306.0H174.7V306.0H174.8V306.0H175.1V306.0H175.2V306.0H175.3V306.0H175.9V306.0H176.0V306.0H176.3V306.0H386.0V276.0H386.0V246.0H386.1V246.0H386.2V246.0H387.3V246.0H387.4V246.0H390.2V246.0H390.3V276.0H390.3V276.0H390.3V306.0H431.4V276.0H431.4V246.0H431.5V246.0H431.6V246.0H432.5V246.0H432.6V246.0H433.6V246.0H433.6V276.0H433.7V276.0H433.7V306.0H810.0"><title>workers em encerramento</title></path>
+<text class="panel-title" x="56" y="348">Vídeos do pico (fila SQS e status no banco)</text>
+<line class="s3" x1="56" x2="72" y1="366" y2="366"/><text class="legend" x="78" y="370">vídeos concluídos</text>
+<line class="s4" x1="221" x2="237" y1="366" y2="366"/><text class="legend" x="243" y="370">na fila</text>
+<line class="s5" x1="316" x2="332" y1="366" y2="366"/><text class="legend" x="338" y="370">em processamento</text>
+<line class="baseline" x1="56" x2="810" y1="540" y2="540"/><text class="tick" x="48" y="544" text-anchor="end">0</text>
+<line class="grid" x1="56" x2="810" y1="510" y2="510"/><text class="tick" x="48" y="514" text-anchor="end">2</text>
+<line class="grid" x1="56" x2="810" y1="480" y2="480"/><text class="tick" x="48" y="484" text-anchor="end">4</text>
+<line class="grid" x1="56" x2="810" y1="450" y2="450"/><text class="tick" x="48" y="454" text-anchor="end">6</text>
+<line class="grid" x1="56" x2="810" y1="420" y2="420"/><text class="tick" x="48" y="424" text-anchor="end">8</text>
+<line class="grid" x1="56" x2="810" y1="390" y2="390"/><text class="tick" x="48" y="394" text-anchor="end">10</text>
+<path class="s3" d="M56.0,540.0H175.6V525.0H195.1V510.0H297.2V495.0H297.2V480.0H297.4V465.0H305.5V450.0H321.8V435.0H366.2V420.0H366.6V405.0H366.8V390.0H810.0"><title>vídeos concluídos</title></path>
+<circle class="dot s3" cx="810" cy="390" r="4"/><text class="end" x="820" y="394">10 de 10</text>
+<path class="s4" d="M56.0,540.0L59.5,540.0L65.5,540.0L71.7,540.0L77.9,540.0L83.8,540.0L90.0,540.0L96.1,540.0L102.2,540.0L108.3,540.0L114.3,495.0L120.3,405.0L126.4,420.0L132.5,420.0L138.5,420.0L144.6,420.0L150.7,420.0L156.7,420.0L162.8,420.0L168.9,420.0L175.0,465.0L181.0,480.0L187.2,480.0L193.3,480.0L199.5,495.0L205.5,495.0L211.5,495.0L217.6,495.0L223.6,495.0L229.8,495.0L235.9,495.0L241.9,495.0L248.0,495.0L254.1,495.0L260.2,495.0L266.3,495.0L272.4,495.0L278.5,495.0L284.5,495.0L291.2,495.0L296.7,495.0L302.8,540.0L308.8,540.0L314.9,540.0L321.0,540.0L327.0,540.0L333.1,540.0L339.1,540.0L345.2,540.0L351.3,540.0L357.3,540.0L363.5,540.0L369.5,540.0L375.6,540.0L381.6,540.0L387.7,540.0L393.8,540.0L399.9,540.0L405.9,540.0L412.0,540.0L418.0,540.0L424.1,540.0L430.2,540.0L436.3,540.0L442.4,540.0L448.5,540.0L454.5,540.0L460.6,540.0L466.7,540.0L472.8,540.0L478.9,540.0L484.9,540.0L491.0,540.0L497.1,540.0L503.2,540.0L509.2,540.0L515.3,540.0L521.3,540.0L527.4,540.0L533.5,540.0L539.6,540.0L545.7,540.0L551.8,540.0L557.8,540.0L563.9,540.0L570.0,540.0L576.1,540.0L582.2,540.0L588.3,540.0L594.3,540.0L600.4,540.0L606.5,540.0L612.6,540.0L618.6,540.0L624.7,540.0L630.8,540.0L636.9,540.0L642.9,540.0L649.0,540.0L655.1,540.0L661.2,540.0L667.3,540.0L673.4,540.0L679.4,540.0L685.5,540.0L691.6,540.0L697.7,540.0L703.8,540.0L709.8,540.0L715.9,540.0L722.0,540.0L728.1,540.0L734.1,540.0L740.2,540.0L746.3,540.0L752.3,540.0L758.4,540.0L764.5,540.0L770.6,540.0L776.7,540.0L782.7,540.0L788.8,540.0L794.9,540.0"><title>na fila</title></path>
+<path class="s5" d="M56.0,540.0L59.5,540.0L65.5,540.0L71.7,540.0L77.9,540.0L83.8,540.0L90.0,540.0L96.1,540.0L102.2,540.0L108.3,525.0L114.3,525.0L120.3,525.0L126.4,510.0L132.5,510.0L138.5,510.0L144.6,510.0L150.7,510.0L156.7,510.0L162.8,510.0L168.9,510.0L175.0,465.0L181.0,465.0L187.2,465.0L193.3,465.0L199.5,465.0L205.5,465.0L211.5,465.0L217.6,465.0L223.6,465.0L229.8,465.0L235.9,465.0L241.9,465.0L248.0,465.0L254.1,465.0L260.2,465.0L266.3,465.0L272.4,465.0L278.5,465.0L284.5,465.0L291.2,465.0L296.7,465.0L302.8,465.0L308.8,480.0L314.9,480.0L321.0,480.0L327.0,495.0L333.1,495.0L339.1,495.0L345.2,495.0L351.3,495.0L357.3,495.0L363.5,495.0L369.5,540.0L375.6,540.0L381.6,540.0L387.7,540.0L393.8,540.0L399.9,540.0L405.9,540.0L412.0,540.0L418.0,540.0L424.1,540.0L430.2,540.0L436.3,540.0L442.4,540.0L448.5,540.0L454.5,540.0L460.6,540.0L466.7,540.0L472.8,540.0L478.9,540.0L484.9,540.0L491.0,540.0L497.1,540.0L503.2,540.0L509.2,540.0L515.3,540.0L521.3,540.0L527.4,540.0L533.5,540.0L539.6,540.0L545.7,540.0L551.8,540.0L557.8,540.0L563.9,540.0L570.0,540.0L576.1,540.0L582.2,540.0L588.3,540.0L594.3,540.0L600.4,540.0L606.5,540.0L612.6,540.0L618.6,540.0L624.7,540.0L630.8,540.0L636.9,540.0L642.9,540.0L649.0,540.0L655.1,540.0L661.2,540.0L667.3,540.0L673.4,540.0L679.4,540.0L685.5,540.0L691.6,540.0L697.7,540.0L703.8,540.0L709.8,540.0L715.9,540.0L722.0,540.0L728.1,540.0L734.1,540.0L740.2,540.0L746.3,540.0L752.3,540.0L758.4,540.0L764.5,540.0L770.6,540.0L776.7,540.0L782.7,540.0L788.8,540.0L794.9,540.0"><title>em processamento</title></path>
+<text class="tick" x="56" y="560" text-anchor="middle">0</text>
+<text class="tick" x="146.77010124357446" y="560" text-anchor="middle">30</text>
+<text class="tick" x="237.54020248714892" y="560" text-anchor="middle">60</text>
+<text class="tick" x="328.3103037307234" y="560" text-anchor="middle">90</text>
+<text class="tick" x="419.08040497429783" y="560" text-anchor="middle">120</text>
+<text class="tick" x="509.8505062178723" y="560" text-anchor="middle">150</text>
+<text class="tick" x="600.6206074614468" y="560" text-anchor="middle">180</text>
+<text class="tick" x="691.3907087050212" y="560" text-anchor="middle">210</text>
+<text class="tick" x="782.1608099485957" y="560" text-anchor="middle">240</text>
+<text class="tick" x="810" y="576" text-anchor="end">segundos desde o início</text>
+<text class="caption" x="56" y="588">1  uploads enviados (k6 saiu com 0) (21,9 s)</text>
+<text class="caption" x="56" y="606">2  todos os jobs terminaram (103,6 s)</text>
+<text class="caption" x="56" y="624">3  workers de volta ao mínimo (126,6 s)</text>
+</svg>

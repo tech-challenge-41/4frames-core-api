@@ -7,7 +7,7 @@ and a shared package. Read this before adding or changing any endpoint or packag
 
 ```
 apps/
-  api/          @4frames/api       Express 5 REST API (hexagonal, see "Layers" below)
+  api/          @4frames/api       Express 5 REST API (hexagonal, see "Layers" below) + src/cron: abandoned-upload expiration entrypoint
   worker/       @4frames/worker    SQS consumer + ffmpeg: frames, zip, job status and progress (see "Worker" below)
   notifier/     @4frames/notifier  Redis `jobs.events` subscriber, SMTP e-mail (Pug templates), recovery sweep, /healthz
 packages/
@@ -25,10 +25,13 @@ packages/
       health/     HealthServer: GET /healthz for the worker and notifier liveness probes
       generated/  Prisma Client output (gitignored, created by `pnpm db:generate`)
 infra/localstack/init/             LocalStack bootstrap scripts
-infra/k8s/                         Kustomize: base (api + HPA, worker + KEDA, notifier, web, Ingress /api and /, migrate Job), overlays local/ci, kind-config.yaml
-scripts/k8s-local.sh               local Kind cluster: Compose infra, images (web from ../4frames-web-app), metrics-server, ingress-nginx, KEDA, migrate Job, overlay local
+infra/k8s/                         Kustomize: base (api + HPA, worker + KEDA, notifier, web, Ingress /api and /, migrate Job, expire-uploads CronJob), overlays local/ci, kind-config.yaml
+tests/e2e/     @4frames/e2e        end-to-end Jest suite against the running cluster (`pnpm test:e2e`; not part of `pnpm test`)
+tests/load/                        k6 scenarios (grafana/k6 container) + run-scenario.sh, sampler.mjs and chart.mjs → docs/evidence/<scenario>/
+docs/evidence/                     versioned results of the load scenarios (charts, pod timelines, counts)
+scripts/k8s-local.sh               the one command for the full stack: `up` (Compose infra, Kind, images incl. web from ../4frames-web-app, metrics-server, ingress-nginx, KEDA, migrate Job, overlay local, check through the Ingress), `down [--all]`
 .github/workflows/                 ci.yml (test→lint→type-check→k8s→build) + cd.yml (release-* → GHCR + Kind smoke)
-docs/adr/                          architecture decisions: ADR-001 (PDF, AWS design) + ADR-002 (local run, monorepo, UUID)
+docs/adr/                          architecture decisions: ADR-001 (PDF, AWS design), ADR-002 (local run, monorepo, UUID), ADR-003..007 (cluster, scaling, job lifecycle, auth, quality); a new decision gets a new ADR
 tsconfig.base.json                 compiler options shared by every package
 eslint.config.js, .prettierrc.js   one lint config for the whole repo
 docker-compose.yml, .env           one Compose file and one .env at the root
@@ -72,6 +75,8 @@ application/
   use-case/<aggregate>/<action>/<action>.usecase.ts + .dto.ts
   error/*.ts                     ApplicationError subclasses (HTTP-facing errors)
 infra/
+  http/http-app.ts                                        createHttpApp: the Express app (middlewares, routes, Swagger, error handler)
+  http/http-initialize.ts                                 starts the Container, graceful shutdown and the listener
   http/controller/<aggregate>/<aggregate>.controller.ts   implements IController
   http/route/<aggregate>.ts                               Express Router
   http/validators/<aggregate>/*.validator.ts              Zod schemas
@@ -106,7 +111,10 @@ relative to `apps/api/src`.
 2. **Use case**: `application/use-case/<aggregate>/<action>/<action>.usecase.ts` +
    `.dto.ts` (separate `InputDTO`/`OutputDTO` interfaces). Constructor takes an
    object of its dependencies (services), typed by their port interfaces — see
-   `CompleteVideoJobUseCase` for the pattern of validating state before mutating it.
+   `CompleteVideoJobUseCase` for the pattern of validating state before mutating it. The status
+   transition itself is a conditional `updateMany` with the expected status in the `WHERE`
+   (`queueIfUploadPending`, `cancelIfPending`), never an `update` by id: a `null` from the port means a
+   concurrent cancel, expiration or worker won, and becomes the same `INVALID_STATE` error.
 3. **Validator** (body/query, if any): Zod schema in
    `infra/http/validators/<aggregate>/<name>.validator.ts`. Path params are parsed in the
    controller, not by `validateMiddleware` (it only validates `req.body` today): a `:jobId`
@@ -124,7 +132,9 @@ relative to `apps/api/src`.
 5. **Route**: wire it into the aggregate's existing `infra/http/route/<aggregate>.ts`.
    Apply `authMiddleware` for any route requiring a logged-in user, then
    `validateMiddleware(schema)` if there's a body schema, then
-   `controllerWrapper(YourController.name)`.
+   `controllerWrapper(YourController.name)`. A new router is mounted through `apiRouters` in
+   `infra/http/route/index.ts`, never straight on the app: Express 5 does not keep a mount prefix as
+   text, and the OpenAPI parity test reads the prefixes from that list.
 6. **Register in the Container**: add the service to `infra.dependency.ts` (if new),
    the use case to `use-case.dependency.ts` (resolving its dependencies via
    `c.resolve(ServiceClass.name)`), and the controller to `controller.dependency.ts`
@@ -132,8 +142,12 @@ relative to `apps/api/src`.
    a string literal.
 7. **OpenAPI docs**: add a path file under `infra/http/docs/paths/<aggregate>/`,
    register it in that folder's `index.ts` and in `infra/http/docs/openapi.ts`.
-   Reuse `docs/responses/*.ts` (bad-request, unauthorized, not-found,
-   too-many-requests) instead of inlining response schemas.
+   Both go through `mergePaths`: two path files may share a key (`POST` and `GET /videos`),
+   and a plain object spread would silently drop the first operation. Reuse
+   `docs/responses/*.ts` (bad-request, unauthorized, not-found, too-many-requests)
+   instead of inlining response schemas. `infra/http/__tests__/openapi-parity.spec.ts`
+   fails when a route registered in Express has no OpenAPI operation, or the other way
+   around; `GET /api-docs` (the docs UI itself) is the only exception.
 8. **Tests**: `.spec.ts` next to the use case, and under `__tests__/` next to the
    controller (matches the existing layout — use case specs are siblings, controller
    specs are in a subfolder). Mock dependencies as plain Jest mocks matching the
@@ -142,6 +156,11 @@ relative to `apps/api/src`.
    (see `user-authenticator.service.spec.ts`).
    Cover: happy path, not-found/wrong-owner (same error/response either way — see
    "Authorization" below), and any domain-specific invalid-state transitions.
+   HTTP tests (supertest) go through the real app from `createHttpApp()`, which needs no
+   Container or port: mock `Container.getInstance` so `resolve` hands back the real
+   `JwtAuthenticatorService` and the real controllers with mocked use cases, set
+   `JWT_SECRET_KEY` and sign the token with `jsonwebtoken`. See
+   `infra/http/route/__tests__/video.spec.ts`, which also reads the SSE route as a stream.
 
 ## Database (Prisma)
 
@@ -231,11 +250,52 @@ producer, only a subscriber.
   logs the path without the query string. Keep both if you touch request logging.
 - The stream ends itself on a terminal event (`job.done`/`job.failed`); a 15s
   heartbeat comment (`: heartbeat\n\n`) keeps proxies from closing an idle
-  connection meanwhile.
+  connection meanwhile. Headers are flushed right after `writeHead`, so the
+  `EventSource` opens before the first event.
+- Every open stream registers in `SseStreamRegistry` (`infra/http/shutdown/`). On
+  SIGTERM, `HttpShutdown` ends them with `retry: 1000` so the `EventSource`
+  reconnects to a replica that is still up; otherwise `server.close()` would wait
+  for them forever. A new streaming endpoint must register the same way.
 - The frontend keeps `GET /videos/:jobId` polling running in parallel as the
   source of truth for status; SSE only adds the live percentage during
   `PROCESSING`. `EventSource` reconnects on its own, so a dropped SSE connection
   is not treated as fatal on either side.
+- `GET /videos` and `GET /videos/:jobId` also carry the last stored percentage as an
+  optional `progress`, read through `IJobProgressReader` (`RedisJobProgressReaderService`:
+  one `MGET progress:*` per request). Only `PROCESSING` jobs get it — the worker leaves
+  `100` stored for an hour after `DONE`. It is best-effort: if Redis fails, the reader
+  returns an empty map and the response goes out without `progress`.
+
+## Abandoned-upload expiration (`apps/api/src/cron`)
+
+- `ExpireAbandonedUploadsUseCase` marks `UPLOAD_PENDING` jobs created before
+  `now - (UPLOAD_URL_TTL_SECONDS + 60 s)` as `EXPIRED` with one conditional `updateMany` (status in the
+  `WHERE`, so a concurrent `complete` wins and reruns are harmless), and counts `PROCESSING` jobs with no
+  write for 15 min (log only; the worker writes to Postgres only on transitions, so progress does not
+  refresh `updated_at`).
+- `cron/main.ts` is a separate entrypoint in the API image, built without the `Container` (it only needs
+  Postgres): `--once` for one pass (the `expire-uploads` CronJob, every minute, `concurrencyPolicy: Forbid`,
+  removed from `overlays/ci`), or a 60 s loop with graceful shutdown for development (`ExpirationRunner`).
+  It must never run inside the API replicas.
+
+## Readiness and graceful shutdown (API)
+
+- `GET /health-check` is liveness: the process is up, nothing else. `GET /ready` is readiness:
+  `CheckReadinessUseCase` runs every `IDependencyHealthIndicator` (`PostgresHealthService`:
+  `SELECT 1`; `RedisHealthService`: `PING`) in parallel, 2 s each, and the controller answers 200 or
+  503 with `{ status, checks }`. A new hard dependency of the API gets an indicator registered in
+  `use-case.dependency.ts`. Both probe paths are left out of the access log.
+- The API has one Redis command connection (`createRedisCommandClient`, registered as
+  `REDIS_COMMAND_CLIENT_KEY`), shared by the `/ready` PING and the progress MGET, with one retry and
+  a 1 s command timeout. SSE streams never use it: each opens its own subscriber connection.
+- `main.ts` registers `registerGracefulShutdown` (`@4frames/shared/process`) with
+  `API_SHUTDOWN_TIMEOUT_SECONDS` (default 20). The API is PID 1 in its container: without a handler
+  the kernel ignores SIGTERM and the pod only dies on SIGKILL. `HttpShutdown.run` stops accepting
+  connections, answers with `Connection: close`, ends the SSE streams, waits for in-flight requests
+  (closing keep-alive connections as they go idle) until the drain deadline, then closes Redis and
+  Prisma. The cluster adds a 5 s `preStop` sleep and `terminationGracePeriodSeconds: 35`.
+- Anything the API keeps open for its whole life (a client, a pool) must be closed in the
+  `closeResources` callback in `http-initialize.ts`; otherwise `process.exit` just drops it.
 
 ## Local environment (Compose + LocalStack)
 
@@ -286,7 +346,8 @@ depends only on the interfaces in `processing/ports.ts`; adapters live next to i
 config/worker-env.ts          zod schema for every worker variable (defaults: FRAME_FPS=1, FRAME_FORMAT=png, WORKER_MAX_PARALLEL_JOBS=2)
 consumer/sqs-consumer.ts      generic SQS loop: long polling, up to maxParallelJobs handlers in parallel (Promises), visibility heartbeat, stop()
 consumer/video-upload-handler.ts  S3 event → use case (ignores s3:TestEvent, deletes malformed messages)
-consumer/dlq-handler.ts       dead-lettered message → FAILED "Falha após 3 tentativas" + job.failed
+consumer/dlq-handler.ts       dead-lettered message: PROCESSING → FAILED "Falha após 3 tentativas" + job.failed; never attempted → back to the queue
+consumer/upload-requeuer.ts   SendMessage of the same body to the uploads queue, `requeue-count` message attribute
 processing/                   use case, ports, InvalidVideoError + FAILURE_REASONS, source key parsing
 ffmpeg/                       run-process (spawn), ffprobe validation, frame extraction with -progress
 storage/ zip/ repo/ progress/ S3 (lib-storage), archiver, Prisma, Redis publisher
@@ -303,6 +364,12 @@ storage/ zip/ repo/ progress/ S3 (lib-storage), archiver, Prisma, Redis publishe
   `PROCESSING`, so a message that reappears after a worker crash resumes the job.
 - The S3 event fires at the end of the PUT, before the front calls `complete`. A job still in
   `UPLOAD_PENDING` is polled for up to 30 s, then the message is returned to the queue.
+- When the 3 receives run out waiting for `complete`, the message reaches the DLQ with the job still in
+  `UPLOAD_PENDING`, or in `QUEUED` if `complete` came after the last wait. Neither was ever attempted (only
+  `markProcessing` leaves `QUEUED`), so the DLQ handler sends the same body back to the uploads queue as a new message
+  (30 s delay for `UPLOAD_PENDING`, none for `QUEUED`) and only then deletes it from the DLQ. The `requeue-count`
+  attribute caps it at `MAX_REQUEUES` (3, ~13 min), which only matters without the expiration routine. Only a
+  `PROCESSING` job becomes `FAILED` in the DLQ; don't fail a `QUEUED` one there (ADR-005 §2.2).
 - `stop()` aborts the long poll and waits for the current message; `isAlive()` stays true while that job
   finishes, so a liveness probe never kills a pod during graceful shutdown.
 - **Parallel jobs**: one `SqsConsumer` on the uploads queue runs up to `WORKER_MAX_PARALLEL_JOBS` handlers
@@ -310,7 +377,8 @@ storage/ zip/ repo/ progress/ S3 (lib-storage), archiver, Prisma, Redis publishe
   Each job spawns its own ffmpeg; temp files are isolated under `WORKER_TMP_DIR/{jobId}`. In Compose, tune
   `WORKER_MAX_PARALLEL_JOBS` and/or `docker compose up --scale worker=N`. Production scaling is still KEDA réplicas per ADR-002.
 - Tests: unit specs next to the code (fake runner for ffmpeg, fake SQS client). `test/integration` runs real
-  ffmpeg on `test/fixtures` and skips when ffmpeg is not in PATH (run them inside the worker container).
+  ffmpeg on `test/fixtures` and skips when ffmpeg is not in PATH (run them inside the worker container). CI installs
+  ffmpeg in the `test` job, so they run there.
 
 ## Docker
 
@@ -349,10 +417,13 @@ pnpm lint             # eslint for the whole repo (lint:fix to autofix); also fo
 pnpm format           # prettier for md/json/yml (format:check to verify)
 pnpm test             # jest in every package
 pnpm --filter @4frames/api test   # a single package
+pnpm test:e2e         # end to end against the cluster (./scripts/k8s-local.sh up first)
+tests/load/run-scenario.sh <name> <max workers> [--reduzir-no-meio]   # k6 peak + KEDA evidence (Git Bash on Windows)
 pnpm db:migrate       # prisma migrate dev (packages/shared)
 pnpm db:deploy        # prisma migrate deploy
 pnpm db:generate      # prisma generate
 pnpm db:seed          # seed test users
+pnpm --filter @4frames/api expire --once   # one pass of the abandoned-upload expiration (no --once: every minute)
 docker compose up -d --build                             # full stack, API in a container
 docker compose up -d postgres redis mailpit localstack   # infra only, apps via pnpm dev:*
 ```
@@ -389,15 +460,11 @@ ordered by `created_at desc`).
 
 - `correlation_id` on `video_jobs` is still unused for correlated logging across
   api/worker/notifier (field exists; propagation not wired end-to-end).
-- `POST /auth` vs. the ADR's documented `POST /auth/login` — the route name
-  never got reconciled with the ADR text; not a functional issue, just a doc
-  mismatch to be aware of.
 
 **Infrastructure-level (per ADR-002):**
 
-- The local Kind cluster (`scripts/k8s-local.sh`) serves the front and the API through ingress-nginx on
-  http://localhost:8080 (`/` → the `web` nginx image built from the sibling `4frames-web-app` clone,
-  `/api` → API with the prefix stripped, in a separate Ingress because of its `rewrite-target`), with
-  metrics-server for the API HPA, KEDA on the worker and migrations + seed as the `migrate` Job. The CD
-  Kind (`overlays/ci`) drops the `web` Deployment: that image belongs to the web-app repo.
 - No Prometheus/Grafana; no metrics exported beyond what's in application logs.
+- The end-to-end suite and the k6 scenarios run only against a local cluster, not in CI, and the CD smoke
+  proves the images start, not the video flow (ADR-007).
+
+The accepted trade-offs of the cluster, scaling, job lifecycle and auth are in ADR-003 to ADR-006.

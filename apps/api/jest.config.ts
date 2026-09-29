@@ -20,13 +20,13 @@ const config: Config = {
     'src/infra/http/docs/',
     'src/dependencies/',
     'src/infra/http/http-initialize.ts',
-    'src/infra/http/route/index.ts',
     'src/main.ts',
+    'src/cron/main.ts',
     'src/types.d.ts'
   ],
   // Gate de cobertura do CI (sem SonarCloud). Subir conforme a cobertura crescer.
   coverageThreshold: {
-    global: { statements: 76, branches: 62, functions: 74, lines: 76 }
+    global: { statements: 91, branches: 79, functions: 88, lines: 91 }
   }
 };
 

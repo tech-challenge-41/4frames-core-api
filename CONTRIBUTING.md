@@ -6,7 +6,8 @@ O front fica em [`4frames-web-app`](https://github.com/tech-challenge-41/4frames
 
 ## Regras em resumo
 
-1. Todo trabalho sai de `develop` em uma branch própria e volta para `develop` por pull request.
+1. Todo trabalho sai de `develop` em uma branch própria e volta para `develop` por pull request, direto ou empilhado
+   sobre outra PR aberta (ver [PRs empilhadas](#prs-empilhadas)).
 2. Ninguém commita direto em `develop` ou `main`.
 3. Todo PR precisa da aprovação de outra pessoa, e quem mescla não é o autor.
 4. Lint, type-check e testes passam (CI verde) antes de pedir revisão.
@@ -104,6 +105,7 @@ BREAKING CHANGE: jobId passa a ser string (uuid) em todas as rotas de /videos.
 - Escreva em português, o idioma da documentação do projeto.
 - A primeira linha tem no máximo 72 caracteres.
 - Um commit, uma ideia. Não misture refatoração com funcionalidade nova.
+- Não cite cards do kanban, nem na primeira linha nem no corpo: nada de "Card 4" ou "fecha o Card 12". Descreva pelo requisito ou pelo comportamento. Como no nome da branch, o número do card não significa nada para quem lê o histórico do git.
 - Use `!` depois do tipo e o rodapé `BREAKING CHANGE:` quando a mudança quebrar o contrato da API, o schema do banco ou as variáveis de ambiente.
 
 ## Hook de pre-commit
@@ -158,11 +160,23 @@ Quando se aplicar:
 
 ### Ao abrir
 
-- A base é `develop`. Só o PR de release usa `main`.
+- A base é `develop`, ou a branch de outra PR aberta, quando empilhada. Só o PR de release usa `main`.
 - O título segue o formato de commit, por exemplo `feat(api): download pré-assinado do zip`.
+- Título e corpo seguem a regra dos commits: sem citar cards do kanban, descrevendo pelo requisito ou pelo comportamento.
 - Preencha o template: o que muda, por que e como testar.
 - Um assunto por PR. Acima de cerca de 400 linhas alteradas, sem contar renomeações, lockfile e arquivos gerados, considere dividir.
 - Trabalho em andamento vai como _draft_.
+
+### PRs empilhadas
+
+Uma PR pode depender de outra que ainda não foi mesclada:
+
+- A branch nova sai da branch da PR aberta mais alta, e a PR usa essa branch como base.
+- Ao criar a branch a partir de uma remota, tire o upstream (`git branch --unset-upstream`), para um `git push` sem
+  argumentos não mirar a branch de origem.
+- O corpo diz de qual PR ela depende e a ordem de merge.
+- O merge vai de baixo para cima. Apagar a branch no merge faz o GitHub mudar a base da PR seguinte sozinho.
+- O CI roda em toda PR, inclusive nas empilhadas.
 
 ### Revisão
 

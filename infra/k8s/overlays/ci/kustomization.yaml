@@ -14,6 +14,14 @@ patches:
       metadata:
         name: migrate
         namespace: 4frames
+  # A expiração também só fala com o Postgres: sem ele, cada passada falharia.
+  - patch: |-
+      $patch: delete
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata:
+        name: expire-uploads
+        namespace: 4frames
   # A imagem 4frames-web é do 4frames-web-app e não é construída aqui: o pod ficaria em ErrImagePull. O Service
   # web fica sem endpoints e o Ingress sem controller, como o da API, e o smoke não passa por nenhum dos dois.
   - patch: |-
@@ -23,6 +31,17 @@ patches:
       metadata:
         name: web
         namespace: 4frames
+  # Sem Postgres, o GET /ready responde 503 e a API nunca ficaria pronta: o rollout do CD falharia. Aqui a
+  # readiness volta a ser o /health-check, que só diz que o processo está de pé, como o smoke precisa.
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: api
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/readinessProbe/httpGet/path
+        value: /health-check
 
 # O workflow de CD sobrescreve newName/newTag com `kustomize edit set image`
 # para as imagens acabadas de construir (carregadas no Kind via kind load).

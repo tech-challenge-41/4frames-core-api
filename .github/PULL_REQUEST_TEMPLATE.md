@@ -6,7 +6,7 @@ Regras completas em CONTRIBUTING.md.
 
 ## O que muda
 
-<!-- Uma a três frases. Cite o card, se houver. -->
+<!-- Uma a três frases, pelo requisito ou pelo comportamento. Não cite cards do kanban. -->
 
 ## Por que
 

@@ -15,9 +15,11 @@ describe('CreateVideoJobUseCase', () => {
     videoJobService = {
       createUploadPendingJob: jest.fn(),
       findById: jest.fn(),
-      updateStatus: jest.fn(),
+      queueIfUploadPending: jest.fn(),
       listByUser: jest.fn(),
-      cancelIfPending: jest.fn()
+      cancelIfPending: jest.fn(),
+      expireUploadPendingCreatedBefore: jest.fn(),
+      countProcessingNotUpdatedSince: jest.fn()
     };
 
     videoStorageService = {

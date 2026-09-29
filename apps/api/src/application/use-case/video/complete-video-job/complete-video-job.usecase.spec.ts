@@ -32,9 +32,11 @@ describe('CompleteVideoJobUseCase', () => {
     videoJobService = {
       createUploadPendingJob: jest.fn(),
       findById: jest.fn(),
-      updateStatus: jest.fn(),
+      queueIfUploadPending: jest.fn(),
       listByUser: jest.fn(),
-      cancelIfPending: jest.fn()
+      cancelIfPending: jest.fn(),
+      expireUploadPendingCreatedBefore: jest.fn(),
+      countProcessingNotUpdatedSince: jest.fn()
     };
 
     videoStorageService = {
@@ -49,12 +51,12 @@ describe('CompleteVideoJobUseCase', () => {
   it('should confirm the upload and move the job from UPLOAD_PENDING to QUEUED', async () => {
     videoJobService.findById.mockResolvedValue(buildJob());
     videoStorageService.headObject.mockResolvedValue(true);
-    videoJobService.updateStatus.mockResolvedValue(buildJob({ status: 'QUEUED' }));
+    videoJobService.queueIfUploadPending.mockResolvedValue(buildJob({ status: 'QUEUED' }));
 
     const result = await useCase.execute({ userId: 1, jobId: JOB_ID });
 
     expect(videoStorageService.headObject).toHaveBeenCalledWith(`videos/1/${JOB_ID}/source.mp4`);
-    expect(videoJobService.updateStatus).toHaveBeenCalledWith(JOB_ID, 'QUEUED');
+    expect(videoJobService.queueIfUploadPending).toHaveBeenCalledWith(JOB_ID, 1);
     expect(result).toEqual({
       jobId: JOB_ID,
       status: 'QUEUED',
@@ -69,7 +71,7 @@ describe('CompleteVideoJobUseCase', () => {
       type: DomainErrorTypes.NOT_FOUND
     });
     expect(videoStorageService.headObject).not.toHaveBeenCalled();
-    expect(videoJobService.updateStatus).not.toHaveBeenCalled();
+    expect(videoJobService.queueIfUploadPending).not.toHaveBeenCalled();
   });
 
   it('should throw NOT_FOUND DomainError when the job belongs to another user', async () => {
@@ -89,7 +91,7 @@ describe('CompleteVideoJobUseCase', () => {
       type: DomainErrorTypes.INVALID_STATE
     });
     expect(videoStorageService.headObject).not.toHaveBeenCalled();
-    expect(videoJobService.updateStatus).not.toHaveBeenCalled();
+    expect(videoJobService.queueIfUploadPending).not.toHaveBeenCalled();
   });
 
   it('should throw PRECONDITION_FAILED DomainError when the object is missing in S3', async () => {
@@ -99,6 +101,18 @@ describe('CompleteVideoJobUseCase', () => {
     await expect(useCase.execute({ userId: 1, jobId: JOB_ID })).rejects.toMatchObject({
       type: DomainErrorTypes.PRECONDITION_FAILED
     });
-    expect(videoJobService.updateStatus).not.toHaveBeenCalled();
+    expect(videoJobService.queueIfUploadPending).not.toHaveBeenCalled();
+  });
+
+  it('should throw INVALID_STATE DomainError when a cancel or the expiration wins the race', async () => {
+    videoJobService.findById.mockResolvedValue(buildJob());
+    videoStorageService.headObject.mockResolvedValue(true);
+    // O job foi a EXPIRED entre o findById e o queueIfUploadPending: a escrita condicional não bate.
+    videoJobService.queueIfUploadPending.mockResolvedValue(null);
+
+    await expect(useCase.execute({ userId: 1, jobId: JOB_ID })).rejects.toMatchObject({
+      type: DomainErrorTypes.INVALID_STATE,
+      message: 'Video job is not awaiting upload confirmation'
+    });
   });
 });

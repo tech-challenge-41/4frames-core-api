@@ -1,0 +1,13 @@
+{"level":30,"time":1790606149783,"pid":1,"service":"worker","port":9100,"path":"/healthz","msg":"Health server listening"}
+{"level":30,"time":1790606149787,"pid":1,"service":"worker","consumer":"uploads","queueUrl":"http://172.19.0.1:4566/000000000000/4frames-video-uploads","maxParallelJobs":1,"msg":"Consumer started"}
+{"level":30,"time":1790606149798,"pid":1,"service":"worker","consumer":"dlq","queueUrl":"http://172.19.0.1:4566/000000000000/4frames-video-uploads-dlq","maxParallelJobs":1,"msg":"Consumer started"}
+{"level":30,"time":1790606149799,"pid":1,"service":"worker","nodeEnv":"production","maxParallelJobs":1,"frameFps":1,"frameFormat":"png","maxVideoDurationSeconds":600,"visibilityTimeoutSeconds":600,"tmpDir":"/tmp/4frames","msg":"Worker started"}
+{"level":30,"time":1790606150690,"pid":1,"service":"worker","jobId":"6c4fbdc4-8b0f-4b2c-960c-e7e634d4bf52","userId":2,"key":"videos/2/6c4fbdc4-8b0f-4b2c-960c-e7e634d4bf52/source.mp4","msg":"Processing started"}
+{"level":30,"time":1790606152229,"pid":1,"service":"worker","jobId":"6c4fbdc4-8b0f-4b2c-960c-e7e634d4bf52","userId":2,"durationSeconds":30.03,"formatName":"mov,mp4,m4a,3gp,3g2,mj2","msg":"Video probed"}
+{"level":30,"time":1790606159387,"pid":1,"service":"worker","signal":"SIGTERM","timeoutMs":570000,"msg":"Shutdown started"}
+{"level":30,"time":1790606159389,"pid":1,"service":"worker","consumer":"uploads","inFlight":1,"msg":"Stopping consumer, waiting for in-flight messages to finish"}
+{"level":30,"time":1790606159389,"pid":1,"service":"worker","consumer":"dlq","inFlight":0,"msg":"Stopping consumer, waiting for in-flight messages to finish"}
+{"level":30,"time":1790606159394,"pid":1,"service":"worker","consumer":"dlq","msg":"Consumer stopped"}
+{"level":30,"time":1790606187464,"pid":1,"service":"worker","jobId":"6c4fbdc4-8b0f-4b2c-960c-e7e634d4bf52","userId":2,"frameCount":30,"zipKey":"zips/2/6c4fbdc4-8b0f-4b2c-960c-e7e634d4bf52.zip","elapsedMs":36774,"msg":"Processing finished"}
+{"level":30,"time":1790606187521,"pid":1,"service":"worker","consumer":"uploads","msg":"Consumer stopped"}
+{"level":30,"time":1790606187542,"pid":1,"service":"worker","signal":"SIGTERM","msg":"Shutdown completed"}

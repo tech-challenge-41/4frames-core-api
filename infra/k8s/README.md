@@ -10,10 +10,10 @@ EKS no ADR-001 (ver ADR-002).
 infra/k8s/
   kind-config.yaml   # cluster Kind local: portas 80 e 443 do Ingress publicadas no host em 8080 e 8443
   base/              # namespace 4frames, ConfigMap, Secret de desenvolvimento, os Deployments de api, worker,
-                     # notifier e front, os dois Ingress e o Job de migrations
+                     # notifier e front, os dois Ingress, o Job de migrations e o CronJob de expiração
   overlays/local/    # Kind local: infra do Compose no host, Secret gerado do .env
-  overlays/ci/       # Kind efêmero do CD: imagens :ci, um Redis para o notifier, sem o Job (não há Postgres) e
-                     # sem o front (a imagem é do 4frames-web-app)
+  overlays/ci/       # Kind efêmero do CD: imagens :ci, um Redis para o notifier, sem o Job e o CronJob (não há
+                     # Postgres) e sem o front (a imagem é do 4frames-web-app)
 ```
 
 | App      | Arquivos do `base`                                                                                               | Escala                                                      |
@@ -29,10 +29,35 @@ devDependencies do `@4frames/shared` e não entram nas imagens dos apps. O `spec
 imutável, então o Job é recriado a cada deploy. Rodar de novo é seguro: o `migrate deploy` só aplica o que
 falta, e o seed usa `upsert`. Terminado, o Job some sozinho em uma hora.
 
+O `expire-uploads-cronjob.yaml` roda a rotina de expiração a cada minuto, com a imagem da API e
+`node dist/cron/main.js --once`. Ela marca como `EXPIRED` os jobs em `UPLOAD_PENDING` cuja URL de upload
+venceu há mais de 60 s, e conta os `PROCESSING` sem escrita há 15 min. `concurrencyPolicy: Forbid` garante
+uma execução por vez, fora das réplicas da API. `activeDeadlineSeconds: 50` impede que uma passada presa
+segure as seguintes, e `backoffLimit: 0` deixa a nova tentativa para o minuto seguinte. Para rodar uma
+passada na hora:
+
+```bash
+kubectl -n 4frames create job --from=cronjob/expire-uploads expire-agora
+kubectl -n 4frames logs job/expire-agora
+```
+
 `api` e `worker` não fixam `replicas`: quem decide são o HPA e o KEDA. Worker e notifier têm liveness e
-readiness em `GET /healthz` na porta 9100; a API, em `GET /health-check`. Os três têm `startupProbe` de até
-150 s: liveness e readiness só começam depois da primeira resposta, então uma réplica nova que demora a subir
-num host carregado não é reiniciada antes de ficar pronta. O front (`web`) é o build do Vite servido por nginx
+readiness em `GET /healthz` na porta 9100. A API tem liveness em `GET /health-check` e readiness em
+`GET /ready`, que só responde 200 quando Postgres e Redis respondem: com o banco fora, a réplica sai do
+balanceamento, mas não é reiniciada. Os três têm `startupProbe` de até 150 s: liveness e readiness só começam
+depois da primeira resposta, então uma réplica nova que demora a subir num host carregado não é reiniciada
+antes de ficar pronta.
+
+A API sai sem derrubar ninguém num rolling update ou num scale-down do HPA:
+
+1. O `preStop` segura o SIGTERM por 5 s, o tempo de o Ingress tirar o pod do balanceamento.
+2. No SIGTERM, a API para de aceitar conexões e responde o que já chegou com `Connection: close`.
+3. Os streams SSE abertos terminam com `retry: 1000`, e o `EventSource` reconecta em outra réplica.
+4. A API espera as requisições em curso, fecha Prisma e Redis e sai.
+
+O prazo total é o `API_SHUTDOWN_TIMEOUT_SECONDS` (20 s), dentro do `terminationGracePeriodSeconds` de 35 s.
+Sem o handler de SIGTERM, a API, que é o PID 1 do container, ignorava o sinal. O pod só saía no SIGKILL, 30 s
+depois, cortando os streams SSE no meio. O front (`web`) é o build do Vite servido por nginx
 sem root na porta 8080, com liveness e readiness em `GET /healthz` e sem `startupProbe`, porque o nginx sobe
 em milissegundos.
 
@@ -55,15 +80,18 @@ acesso do ingress-nginx grava o caminho sem a query string, e a API mascara `?to
 
 ## Cluster local (Kind)
 
-Pré-requisitos: Docker, [kind](https://kind.sigs.k8s.io/), `kubectl`, o `.env` na raiz (`cp .env.example .env`) e
-o [`4frames-web-app`](https://github.com/tech-challenge-41/4frames-web-app) clonado ao lado deste repositório,
-de onde sai a imagem do front. `WEB_APP_DIR` aponta para um clone em outro lugar.
+Pré-requisitos: Docker rodando, com Compose v2, [kind](https://kind.sigs.k8s.io/), `kubectl`, `curl` e o
+[`4frames-web-app`](https://github.com/tech-challenge-41/4frames-web-app) clonado ao lado deste repositório,
+de onde sai a imagem do front. `WEB_APP_DIR` aponta para um clone em outro lugar. O passo a passo para uma
+máquina limpa está no [README da raiz](../../README.md#como-rodar-a-solução-completa).
 
 ```bash
 ./scripts/k8s-local.sh up
 ```
 
-O script, em ordem:
+Antes de mexer em qualquer coisa, o script confere as ferramentas, se o Docker responde e se o clone do front
+tem `Dockerfile`, e cria o `.env` a partir do `.env.example` se ele não existir. Depois, em etapas numeradas
+na saída:
 
 1. Sobe a infra no Compose (`postgres redis mailpit localstack`) e espera ela ficar saudável. As migrations
    rodam no cluster (passo 9); o serviço `migrate` do Compose fica para o desenvolvimento no Compose.
@@ -89,6 +117,9 @@ O script, em ordem:
    detectado e aplica. Espera o Job de migrations e seed terminar, mostrando o log dele se falhar. Se o apply
    alterou o ConfigMap ou o Secret, reinicia `api`, `worker` e `notifier`, que leem os dois por `envFrom` e só
    veem valores novos em pods novos. Depois espera os rollouts.
+10. Confere pelo Ingress, como o navegador: `http://localhost:8080/` (front) e
+    `http://localhost:8080/api/ready` (API com Postgres e Redis) respondendo 200, com até 2 minutos de espera.
+    Por fim imprime os endereços e o tempo total.
 
 Ao reusar um cluster, o script confere se a porta do Ingress está publicada. Um cluster criado antes dela
 no `kind-config.yaml`, ou que voltou de um reinício do Docker Desktop, aborta com a instrução de recriar.
@@ -99,13 +130,19 @@ no `kind-config.yaml`, ou que voltou de um reinício do Docker Desktop, aborta c
 | API          | http://localhost:8080/api/health-check e http://localhost:8080/api/api-docs/ (pelo Ingress)     |
 | Front em dev | No `4frames-web-app`: `VITE_API_URL=http://localhost:8080/api pnpm dev` → http://localhost:5173 |
 | E-mails      | Mailpit do Compose, http://localhost:8025                                                       |
+| S3 e SQS     | LocalStack do Compose, http://localhost:4566                                                    |
 
 ```bash
 ./scripts/k8s-local.sh status                                  # pods, services, Ingress, HPA e ScaledObject
 ./scripts/k8s-local.sh logs                                    # últimas linhas dos apps, do front e do migrate
 kubectl -n 4frames get pods -l app.kubernetes.io/name=worker -w   # KEDA subindo workers com a fila cheia
 ./scripts/k8s-local.sh down                                    # apaga o cluster; a infra do Compose continua
+./scripts/k8s-local.sh down --all                              # apaga o cluster e derruba a infra do Compose
 ```
+
+O `down --all` roda `docker compose down` sem `-v`: o volume do Postgres fica, e o próximo `up` encontra os
+dados. O LocalStack não guarda objetos nem mensagens entre reinícios. Mínimo e máximo de réplicas do HPA e do
+KEDA: [README da raiz](../../README.md#ajustar-as-réplicas).
 
 - Não deixe `api`, `worker` e `notifier` do Compose no ar junto com o cluster: disputam a mesma fila. O script
   avisa; pare-os com `docker compose stop api worker notifier`.
@@ -144,9 +181,12 @@ notifier só fica pronto com a assinatura de `jobs.events` ativa. Postgres e Loc
 cluster: o smoke prova que as imagens sobem e respondem saúde (`/health-check` da API, `/healthz` do worker e
 rollout do notifier), não o fluxo de vídeo. O Ingress do `base` é aplicado, mas o CD não instala o
 ingress-nginx nem o metrics-server: o smoke chega aos Services por `port-forward`. Sem Postgres, o overlay
-`ci` tira o Job de migrations; a imagem `4frames-migrate` é publicada no GHCR com as outras. O overlay também
+`ci` tira o Job de migrations e o CronJob de expiração; a imagem `4frames-migrate` é publicada no GHCR com as
+outras, e a expiração usa a imagem da API. O overlay também
 tira o Deployment do front: a imagem `4frames-web` vem do `4frames-web-app`, e este CD não a constrói. Sem ele,
-o pod ficaria em `ErrImagePull`. O Service `web` fica sem endpoints, o que não afeta o smoke.
+o pod ficaria em `ErrImagePull`. O Service `web` fica sem endpoints, o que não afeta o smoke. Por fim, a
+readiness da API volta a ser o `/health-check`: sem Postgres, o `/ready` responderia 503 para sempre, e o
+rollout do CD nunca terminaria.
 
 ## Deploy de uma tag `release-*` no cluster local
 
@@ -172,8 +212,8 @@ kubectl -n 4frames wait --for=condition=complete job/migrate --timeout=300s
 kubectl -n 4frames rollout restart deploy/api deploy/worker deploy/notifier
 ```
 
-O front fica de fora: a imagem `4frames-web` é do `4frames-web-app` e ainda não é publicada no GHCR. O `up` a
-constrói a partir do clone.
+O front fica de fora: a imagem `4frames-web` é publicada pelo CD do `4frames-web-app`, não por este. O `up` a constrói a
+partir do clone.
 
-O `base/secret.yaml` tem valores de desenvolvimento (iguais ao `.env.example`), usados só pelo overlay `ci`.
+O `base/secret.yaml` tem valores de desenvolvimento, usados só pelo overlay `ci`.
 Não use em produção.

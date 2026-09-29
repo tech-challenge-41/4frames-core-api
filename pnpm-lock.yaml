@@ -223,6 +223,15 @@ importers:
         specifier: ^4.21.0
         version: 4.23.12
 
+  tests/e2e:
+    devDependencies:
+      '@types/adm-zip':
+        specifier: ^0.5.8
+        version: 0.5.8
+      adm-zip:
+        specifier: ^0.6.1
+        version: 0.6.1
+
 packages:
 
   '@aws-sdk/checksums@3.1000.29':

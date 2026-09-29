@@ -7,11 +7,106 @@ O front fica em [`4frames-web-app`](https://github.com/tech-challenge-41/4frames
 branch, commit e PR estão no [CONTRIBUTING.md](./CONTRIBUTING.md). Convenções de código estão no
 [CLAUDE.md](./CLAUDE.md).
 
+## Como rodar a solução completa
+
+Um comando sobe tudo num cluster Kubernetes local (Kind):
+
+- o front e a API atrás do Ingress, com a API escalada pelo HPA;
+- o worker escalado pelo KEDA pela profundidade da fila SQS;
+- o notifier.
+
+Postgres, Redis, LocalStack (S3 e SQS) e Mailpit rodam no Docker Compose, fora do cluster, como os serviços gerenciados ficavam fora do EKS no ADR-001.
+
+**Pré-requisitos**
+
+- Docker com Compose v2 e 8 GB de memória ou mais para ele. Em repouso a stack usa cerca de 2,5 GB; no pico, cada worker processa um vídeo com ffmpeg.
+- [kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation), [kubectl](https://kubernetes.io/docs/tasks/tools/), `curl` e Git. No Windows, rode os comandos no Git Bash.
+- Portas livres no host: 8080 e 8443 (Ingress), 5432, 6379, 4566, 1025 e 8025.
+
+Node e pnpm não são necessários: as imagens são construídas dentro do Docker.
+
+```bash
+git clone https://github.com/tech-challenge-41/4frames-core-api.git
+git clone https://github.com/tech-challenge-41/4frames-web-app.git
+cd 4frames-core-api
+./scripts/k8s-local.sh up
+```
+
+O front é construído a partir do `4frames-web-app` clonado ao lado. Se não houver `.env`, o `up` cria um a partir do `.env.example`. Depois ele segue estas etapas, esperando cada uma ficar pronta:
+
+1. Infra no Compose: Postgres, Redis, Mailpit e LocalStack com bucket, filas e DLQ.
+2. Cluster Kind `4frames-local`, com o Ingress publicado em 8080 e 8443.
+3. Build das imagens `api`, `worker`, `notifier`, `web` e `migrate`, carregadas no nó.
+4. metrics-server, para o HPA medir a CPU da API.
+5. ingress-nginx.
+6. KEDA.
+7. Migrations e seed num Job e, depois, os apps.
+8. Verificação pelo Ingress: o front em `/` e a API em `/api/ready`, que só responde 200 com banco e Redis de pé.
+
+A primeira execução baixa as imagens base e constrói tudo, por isso demora mais. As seguintes aproveitam o cache. Rodar o `up` de novo com a stack no ar atualiza o que mudou.
+
+| O quê    | Onde                                                                            |
+| -------- | ------------------------------------------------------------------------------- |
+| Front    | http://localhost:8080, com o usuário do seed `admin@admin.com` / `123456`       |
+| API      | http://localhost:8080/api, com o Swagger em http://localhost:8080/api/api-docs/ |
+| E-mails  | Mailpit, http://localhost:8025                                                  |
+| S3 e SQS | LocalStack, http://localhost:4566                                               |
+
+```bash
+./scripts/k8s-local.sh status       # pods, Ingress, HPA e ScaledObject
+./scripts/k8s-local.sh logs         # últimas linhas de cada app
+./scripts/k8s-local.sh down         # apaga o cluster; a infra do Compose continua
+./scripts/k8s-local.sh down --all   # apaga o cluster e derruba a infra do Compose
+```
+
+O `down --all` mantém o volume do Postgres. Para apagar também os dados, rode `docker compose down -v` depois. Depois de reiniciar a máquina ou o Docker Desktop, rode `down` e `up`: o nó do Kind volta sem as portas publicadas.
+
+### Ajustar as réplicas
+
+| App    | Quem escala         | Arquivo                                   | Campos (padrão)                                                                      |
+| ------ | ------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------ |
+| API    | HPA, pela CPU       | `infra/k8s/base/api-hpa.yaml`             | `minReplicas` (2), `maxReplicas` (4), `averageUtilization` (70 % do `requests.cpu`)  |
+| Worker | KEDA, pela fila SQS | `infra/k8s/base/worker-scaledobject.yaml` | `minReplicaCount` (1), `maxReplicaCount` (5), `queueLength` (1 mensagem por réplica) |
+
+Para mudar de vez, edite o arquivo e rode `./scripts/k8s-local.sh up`. Para experimentar sem editar, mude direto no cluster. O próximo `up` volta aos valores dos arquivos.
+
+```bash
+kubectl -n 4frames patch hpa api --type merge -p '{"spec":{"minReplicas":2,"maxReplicas":6}}'
+kubectl -n 4frames patch scaledobject worker --type merge -p '{"spec":{"minReplicaCount":0,"maxReplicaCount":8}}'
+kubectl -n 4frames get hpa,scaledobject
+```
+
+- Cada worker processa um vídeo por vez (`WORKER_MAX_PARALLEL_JOBS=1` no ConfigMap), então o máximo de réplicas é o máximo de vídeos em paralelo. Numa máquina só, réplicas além do número de núcleos não aceleram nada.
+- Com `minReplicaCount: 0`, o KEDA desliga o worker quando a fila esvazia, e o primeiro vídeo seguinte espera um pod subir.
+- O HPA depende do metrics-server, cuja primeira coleta leva perto de um minuto.
+
+Detalhes dos manifestos, do script e do CD: [infra/k8s/README.md](./infra/k8s/README.md).
+
 ## Documentação
 
-[Decisões de arquitetura](./docs/adr/README.md): o [ADR-001](./docs/adr/ADR-001-arquitetura.pdf) define a
-arquitetura, e o [ADR-002](./docs/adr/ADR-002-execucao-local-e-monorepo.md) registra a execução local, o monorepo e o
-que mudou em relação ao ADR-001.
+[Decisões de arquitetura](./docs/adr/README.md):
+
+| ADR                                                                   | Assunto                                                                                |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| [ADR-001](./docs/adr/ADR-001-arquitetura.pdf)                         | A arquitetura: três planos, fluxo ponta a ponta e garantias                            |
+| [ADR-002](./docs/adr/ADR-002-execucao-local-e-monorepo.md)            | Execução sem AWS, monorepo e job com UUID, com o que substitui cada serviço gerenciado |
+| [ADR-003](./docs/adr/ADR-003-cluster-local-kind-compose-kustomize.md) | Cluster Kind, infraestrutura no Compose, Kustomize, Ingress, migrations e expiração    |
+| [ADR-004](./docs/adr/ADR-004-escala-e-encerramento-sem-perda.md)      | HPA, KEDA e encerramento gracioso de API e worker                                      |
+| [ADR-005](./docs/adr/ADR-005-ciclo-de-vida-do-job.md)                 | Estados do job, cancelamento, expiração, falhas, progresso e notificação               |
+| [ADR-006](./docs/adr/ADR-006-autenticacao-e-acesso.md)                | Login, token, autorização por dono, URLs pré-assinadas e segredos                      |
+| [ADR-007](./docs/adr/ADR-007-qualidade-testes-e-entrega.md)           | Camadas de teste, gates de cobertura, evidências, CI/CD e fluxo de trabalho            |
+
+Além dos ADRs: o [README do Kubernetes](./infra/k8s/README.md) (manifestos, script e CD), as
+[evidências de carga e escala](./docs/evidence/README.md) e o OpenAPI, servido pela API em `/api-docs`.
+
+### Scripts de criação dos recursos
+
+| Recurso               | Scripts                                                                                                                                                                                                                                            |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Banco (PostgreSQL)    | Migrations em SQL, aplicadas em ordem por `prisma migrate deploy`: [`packages/shared/prisma/migrations/*/migration.sql`](./packages/shared/prisma/migrations). Usuários de teste: [`packages/shared/prisma/seeds`](./packages/shared/prisma/seeds) |
+| S3 e SQS (LocalStack) | [`infra/localstack/init`](./infra/localstack/init): bucket com CORS, fila com DLQ e a notificação `videos/` → fila                                                                                                                                 |
+| Infraestrutura local  | [`docker-compose.yml`](./docker-compose.yml): Postgres, Redis, LocalStack e Mailpit                                                                                                                                                                |
+| Cluster e aplicação   | [`scripts/k8s-local.sh`](./scripts/k8s-local.sh) e os manifestos em [`infra/k8s`](./infra/k8s), com o Job que aplica migrations e seed no cluster                                                                                                  |
 
 ## Estrutura
 
@@ -23,6 +118,8 @@ que mudou em relação ao ADR-001.
 | `packages/shared` | `@4frames/shared`   | Prisma (schema, migrations, seeds e client), env, logger, contratos de job, clientes AWS e Redis |
 | `infra/`          | –                   | LocalStack (`localstack/init`) e manifestos Kubernetes com Kustomize (`k8s/`)                    |
 | `scripts/`        | –                   | `k8s-local.sh`: cluster Kind local com a stack completa                                          |
+| `tests/e2e`       | `@4frames/e2e`      | Teste ponta a ponta contra a stack no cluster (`pnpm test:e2e`)                                  |
+| `tests/load`      | –                   | Cenários de carga com o k6 e a escala do worker pelo KEDA, com evidência em `docs/evidence/`     |
 
 A API segue arquitetura hexagonal em `apps/api/src`: `domain` (ports e erros), `application`
 (use cases e DTOs), `infra` (HTTP, serviços, logging) e `dependencies` (container de DI).
@@ -72,33 +169,16 @@ pnpm dev:api
 
 ### Cluster Kubernetes local (Kind)
 
-É onde a stack roda e escala como no ADR-002: front e API atrás do Ingress, API com HPA, worker escalado pelo
-KEDA pela profundidade da fila SQS (um vídeo por réplica) e notifier. A infra (Postgres, Redis, LocalStack e
-Mailpit) continua no Compose, fora do cluster.
+É a [solução completa](#como-rodar-a-solução-completa), com `./scripts/k8s-local.sh up`. No desenvolvimento:
 
-A imagem do front é construída a partir do
-[`4frames-web-app`](https://github.com/tech-challenge-41/4frames-web-app), que precisa estar clonado ao lado
-deste repositório (ou em `WEB_APP_DIR`).
-
-```bash
-./scripts/k8s-local.sh up
-```
-
-O script sobe a infra no Compose, cria o cluster, constrói e carrega as imagens, instala o metrics-server, o
-ingress-nginx e o KEDA e aplica o overlay `infra/k8s/overlays/local`. As migrations e o seed rodam num Job do
-cluster, antes dos apps.
-Pare antes `api`, `worker` e `notifier` do Compose, que disputariam a mesma fila:
-`docker compose stop api worker notifier`.
-
-| O quê       | Como                                                                                            |
-| ----------- | ----------------------------------------------------------------------------------------------- |
-| Front       | http://localhost:8080 (pelo Ingress)                                                            |
-| API         | http://localhost:8080/api/health-check e http://localhost:8080/api/api-docs/ (pelo Ingress)     |
-| Login       | `admin@admin.com` / `123456` (seed), pelo front ou em `POST /api/auth`                          |
-| Front (dev) | No `4frames-web-app`: `VITE_API_URL=http://localhost:8080/api pnpm dev` → http://localhost:5173 |
-| Escala      | `kubectl -n 4frames get pods -l app.kubernetes.io/name=worker -w` enquanto enfileira vídeos     |
-| Status/logs | `./scripts/k8s-local.sh status` / `./scripts/k8s-local.sh logs`                                 |
-| Desligar    | `./scripts/k8s-local.sh down` (apaga o cluster; a infra do Compose continua)                    |
+- Pare antes `api`, `worker` e `notifier` do Compose, que disputariam a mesma fila com o cluster:
+  `docker compose stop api worker notifier`. O `up` avisa quando eles estão no ar.
+- Código novo entra no cluster com outro `up`: ele reconstrói as imagens e reinicia só os Deployments cuja
+  imagem mudou.
+- Para o front em modo dev contra a API do cluster, no `4frames-web-app`:
+  `VITE_API_URL=http://localhost:8080/api pnpm dev` → http://localhost:5173.
+- `kubectl -n 4frames get pods -l app.kubernetes.io/name=worker -w` mostra o KEDA subindo workers enquanto
+  vídeos entram na fila.
 
 Layout dos manifestos, o que o script faz passo a passo e o deploy de uma tag `release-*`:
 [infra/k8s/README.md](./infra/k8s/README.md).
@@ -117,18 +197,38 @@ Layout dos manifestos, o que o script faz passo a passo e o deploy de uma tag `r
 
 ### Comandos (na raiz)
 
-| Comando                                                     | O que faz                                                              |
-| ----------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `pnpm dev:api` / `dev:worker` / `dev:notifier`              | Compila o `shared` e sobe o app com hot reload                         |
-| `pnpm dev:shared`                                           | Recompila o `shared` a cada mudança                                    |
-| `pnpm build`                                                | Compila todos os pacotes, na ordem de dependência                      |
-| `pnpm type-check`                                           | Type-check de todos os pacotes                                         |
-| `pnpm lint` / `pnpm lint:fix`                               | ESLint no monorepo inteiro                                             |
-| `pnpm format` / `pnpm format:check`                         | Prettier em Markdown, JSON e YAML (TypeScript é formatado pelo ESLint) |
-| `pnpm test`                                                 | Testes de todos os pacotes                                             |
-| `pnpm db:generate` / `db:migrate` / `db:deploy` / `db:seed` | Prisma no `@4frames/shared`                                            |
+| Comando                                                     | O que faz                                                                     |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `pnpm dev:api` / `dev:worker` / `dev:notifier`              | Compila o `shared` e sobe o app com hot reload                                |
+| `pnpm dev:shared`                                           | Recompila o `shared` a cada mudança                                           |
+| `pnpm build`                                                | Compila todos os pacotes, na ordem de dependência                             |
+| `pnpm type-check`                                           | Type-check de todos os pacotes                                                |
+| `pnpm lint` / `pnpm lint:fix`                               | ESLint no monorepo inteiro                                                    |
+| `pnpm format` / `pnpm format:check`                         | Prettier em Markdown, JSON e YAML (TypeScript é formatado pelo ESLint)        |
+| `pnpm test`                                                 | Testes de todos os pacotes                                                    |
+| `pnpm test:e2e`                                             | Teste ponta a ponta contra a stack no cluster (precisa do `k8s-local.sh up`)  |
+| `pnpm db:generate` / `db:migrate` / `db:deploy` / `db:seed` | Prisma no `@4frames/shared`                                                   |
+| `pnpm --filter @4frames/api expire --once`                  | Uma passada da expiração de uploads abandonados (sem `--once`, a cada minuto) |
 
 Para um pacote só, use `--filter`, por exemplo `pnpm --filter @4frames/api test`.
+
+### Expiração de uploads abandonados
+
+Um job criado com `POST /videos` cujo upload nunca foi confirmado fica em `UPLOAD_PENDING`. Quando a URL
+de upload vence (`UPLOAD_URL_TTL_SECONDS`, 5 min) e passa mais 60 s de folga, a rotina de expiração o marca
+como `EXPIRED`. Ela também conta, e registra no log, os jobs em `PROCESSING` sem nenhuma escrita há mais de
+15 min, sinal de worker parado.
+
+A rotina é um entrypoint separado na imagem da API (`dist/cron/main.js`), fora das réplicas dela, e roda uma
+execução por vez:
+
+- No cluster, é o CronJob `expire-uploads`, a cada minuto, com `concurrencyPolicy: Forbid` e `--once`.
+- No desenvolvimento, com os apps no host: `pnpm --filter @4frames/api expire --once` para uma passada, ou
+  sem `--once` para uma passada por minuto até o Ctrl+C.
+- Com tudo no Docker: `docker compose exec api pnpm --filter @4frames/api expire --once`.
+
+A escrita é condicional (`UPLOAD_PENDING` no `WHERE`): um job que o `complete` levou a `QUEUED` no mesmo
+instante não expira, e rodar a rotina duas vezes não muda nada.
 
 ## LocalStack (S3 e SQS)
 
@@ -177,9 +277,10 @@ A imagem do worker instala `ffmpeg` (como o projeto base), roda como usuário `n
 
 ## CI/CD (GitHub Actions)
 
-- **CI** (`.github/workflows/ci.yml`), em PR e push para `develop`/`main`: `test` (com gate de cobertura Jest, sem
-  SonarCloud) → `lint` → `type-check` → validação dos manifestos Kubernetes → build das imagens `api`, `worker` e
-  `notifier`.
+- **CI** (`.github/workflows/ci.yml`), em toda PR, inclusive as empilhadas sobre outra branch, e em push para
+  `develop`/`main`: `test` (com gate de cobertura Jest, sem SonarCloud, e com ffmpeg, para os testes de integração do
+  worker) → `lint` → `type-check` → validação dos manifestos Kubernetes → build das imagens `api`, `worker`,
+  `notifier` e `migrate`.
 - **CD** (`.github/workflows/cd.yml`), em tag `release-*`: publica as imagens versionadas no GHCR, sobe um cluster Kind
   efêmero com o KEDA, aplica `infra/k8s/overlays/ci` e roda smoke (`/health-check`, `/healthz`, rollout do notifier).
 
@@ -188,15 +289,19 @@ Regras de merge (CI verde + revisão de outra pessoa, sem branch protection no p
 
 ## Endpoints
 
-- `POST /auth` — autenticação por email e senha
+- `POST /auth/login` — autenticação por email e senha (`POST /auth` continua respondendo igual, marcada como
+  _deprecated_ no OpenAPI)
 - `POST /videos` — cria um job de conversão (`UPLOAD_PENDING`) e devolve uma URL pré-assinada de upload ao S3
-- `GET /videos` — lista os jobs do usuário autenticado, paginado (`limit`/`offset`), mais recentes primeiro
-- `GET /videos/:jobId` — consulta status do job (autorizado apenas para o dono)
+- `GET /videos` — lista os jobs do usuário autenticado, paginado (`limit`/`offset`), mais recentes primeiro,
+  com o percentual (`progress`) dos jobs em `PROCESSING`
+- `GET /videos/:jobId` — consulta status do job (autorizado apenas para o dono), com o `progress` quando em
+  `PROCESSING`
 - `GET /videos/:jobId/events` — progresso em tempo real via SSE (Server-Sent Events), alimentado pelo Redis Pub/Sub que o worker publica
 - `POST /videos/:jobId/complete` — confirma o upload no S3 (HEAD do objeto) e avança o job para `QUEUED`
 - `POST /videos/:jobId/cancel` — cancela um job em `UPLOAD_PENDING` ou `QUEUED` (reaproveita o status `EXPIRED`)
 - `GET /videos/:jobId/download` — URL pré-assinada de download do `.zip` (só quando o job está `DONE`)
-- `GET /health-check` — health check
+- `GET /health-check` — o processo está de pé (liveness)
+- `GET /ready` — Postgres e Redis respondem: `200` ou `503`, com o estado de cada um (readiness)
 - `GET /api-docs` — documentação OpenAPI
 
 Todas as rotas de `/videos` exigem `Authorization: Bearer <token>`, exceto `GET /videos/:jobId/events`,
@@ -210,8 +315,9 @@ recebe `400`.
 2. O cliente faz `PUT` do arquivo direto na `uploadUrl` (bytes não passam pela API).
 3. `POST /videos/{jobId}/complete` → confirma o objeto no bucket e marca `QUEUED`. Até esse ponto o job
    ainda pode ser cancelado com `POST /videos/{jobId}/cancel`.
-4. `GET /videos/{jobId}` (polling) ou `GET /videos/{jobId}/events` (SSE, progresso ao vivo durante
-   `PROCESSING`) → acompanha o status: `UPLOAD_PENDING` → `QUEUED` → `PROCESSING` → `DONE`/`FAILED`/`EXPIRED`.
+4. `GET /videos/{jobId}` (polling, com o último percentual em `progress`) ou `GET /videos/{jobId}/events` (SSE,
+   progresso ao vivo durante `PROCESSING`) → acompanha o status: `UPLOAD_PENDING` → `QUEUED` → `PROCESSING` →
+   `DONE`/`FAILED`/`EXPIRED`. O percentual vem do Redis e é opcional: sem ele, a resposta sai sem o campo.
 5. Quando `DONE`, `GET /videos/{jobId}/download` devolve uma URL pré-assinada de `GET` para o `.zip`.
 
 O processamento em si é feito pelo worker (ver [Worker](#worker)), e o `apps/notifier` manda o e-mail em
@@ -237,6 +343,9 @@ todos na raiz do zip.
 - **Vídeo inválido**: `FAILED` com `failure_reason` legível, `job.failed` e a mensagem é apagada.
 - **Falha transiente** (S3, banco, ffmpeg morto): a mensagem volta à fila em 60 s. Depois de 3 recebimentos
   vai para a DLQ, e o próprio worker marca o job `FAILED` com `Falha após 3 tentativas`.
+- **Upload confirmado tarde**: se os 3 recebimentos se esgotam esperando o `complete`, a mensagem chega à DLQ com o
+  job em `UPLOAD_PENDING` ou `QUEUED`, nunca tentado. O worker a devolve à fila de uploads como mensagem nova, até 3
+  vezes (atributo `requeue-count`), em vez de marcar `FAILED` ou descartar.
 - **Visibilidade**: enquanto processa, o worker renova a visibilidade da mensagem a cada
   `VISIBILITY_TIMEOUT_SECONDS / 2`. Se o worker cair, a mensagem reaparece e outro worker retoma o job.
 - **Encerramento**: no SIGTERM (`docker compose stop worker`, scale-down do KEDA) para de receber, termina o
@@ -255,6 +364,42 @@ Para rodá-los no container:
 ```bash
 docker compose exec worker pnpm --filter @4frames/worker test
 ```
+
+## Testes ponta a ponta e de carga
+
+Os dois rodam contra a stack no cluster, que precisa estar no ar (`./scripts/k8s-local.sh up`): eles não sobem
+nada. Os jobs ficam com o `user@user.com`, e a listagem do `admin@admin.com` não muda.
+
+**Ponta a ponta** (`tests/e2e`, Jest), pelo Ingress, como o navegador:
+
+- login, `POST /videos`, `PUT` direto no S3 e `complete`;
+- o progresso chega pelo SSE até o `job.done`, e o status termina em `DONE`;
+- o zip tem um PNG por segundo, na ordem e na raiz, e o e-mail chega ao Mailpit com o link do job;
+- um arquivo inválido termina em `FAILED`, com o motivo, e gera o e-mail de falha;
+- a listagem mostra os dois, e outro usuário recebe 404, como para um job que não existe.
+
+```bash
+pnpm test:e2e
+```
+
+`API_URL` e `MAILPIT_URL` apontam para outro ambiente; o padrão é `http://localhost:8080/api` e
+`http://localhost:8025`.
+
+**Carga e escala** (`tests/load`, com o k6 no container `grafana/k6`, sem instalar nada). O `run-scenario.sh`:
+
+- envia `VIDEOS` vídeos ao mesmo tempo (padrão 10), como pelo front (`uploads.js`);
+- mantém `USERS` usuários consultando a listagem a cada 3 s durante o pico (padrão 10, `listagem.js`);
+- grava em `docs/evidence/<cenário>/` a evolução dos workers, da fila e dos jobs, com um gráfico (`timeline.svg`) e um
+  resumo (`resumo.md`);
+- sai com erro se alguma requisição falhar ou se algum vídeo não chegar a `DONE`.
+
+```bash
+tests/load/run-scenario.sh 1-worker 1                            # o KEDA limitado a 1: um worker fixo
+tests/load/run-scenario.sh keda-ate-5 5                          # o KEDA de 1 a 5 workers
+tests/load/run-scenario.sh reducao-no-meio 5 --reduzir-no-meio   # o máximo cai para 1 com 5 vídeos em processamento
+```
+
+No Windows, rode no Git Bash. Os resultados e a comparação estão em [docs/evidence](./docs/evidence/README.md).
 
 ## Seeds
 

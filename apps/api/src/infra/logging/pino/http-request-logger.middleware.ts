@@ -66,6 +66,8 @@ export function formatHttpAccessLogMessage(req: IncomingMessage, res: ServerResp
   return `${status} - ${req.method} ${redactUrlToken(req.url ?? '')}`;
 }
 
+const PROBE_PATHS = new Set(['/health-check', '/ready']);
+
 export function createHttpRequestLoggerMiddleware(): RequestHandler {
   return pinoHttp({
     logger: rootPinoLogger,
@@ -74,7 +76,8 @@ export function createHttpRequestLoggerMiddleware(): RequestHandler {
     customSuccessMessage: (req, res) => formatHttpAccessLogMessage(req, res),
     customErrorMessage: (req, res) => formatHttpAccessLogMessage(req, res),
     autoLogging: {
-      ignore: (req: IncomingMessage) => req.url === '/health-check'
+      // Probes do kubelet: uma linha a cada poucos segundos por réplica, sem informação útil.
+      ignore: (req: IncomingMessage) => PROBE_PATHS.has(req.url ?? '')
     }
   });
 }

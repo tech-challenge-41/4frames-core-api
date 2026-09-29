@@ -9,13 +9,15 @@ import {
   type JobEventSubscription
 } from '@/domain/ports/service/job-event-subscriber.service.interface';
 import { type IUseCase } from '@/domain/ports/use-case';
+import { SseStreamRegistry } from '@/infra/http/shutdown/sse-stream-registry';
 
-import { GetVideoJobEventsController } from '../get-video-job-events.controller';
+import { GetVideoJobEventsController, SHUTDOWN_RECONNECT_DELAY_MS } from '../get-video-job-events.controller';
 
 const JOB_ID = '6f1c2a9e-4b7d-4c1a-9f3e-2d8b5a7c9e10';
 
 class FakeResponse extends EventEmitter {
   public writeHead = jest.fn();
+  public flushHeaders = jest.fn();
   public write = jest.fn();
   public end = jest.fn(() => {
     this.emit('close');
@@ -34,6 +36,7 @@ describe('GetVideoJobEventsController', () => {
   let mockSubscriber: jest.Mocked<IJobEventSubscriber>;
   let mockSubscription: jest.Mocked<JobEventSubscription>;
   let controller: GetVideoJobEventsController;
+  let sseStreams: SseStreamRegistry;
   let onEventCallback: (event: JobEvent) => void;
 
   beforeEach(() => {
@@ -48,7 +51,8 @@ describe('GetVideoJobEventsController', () => {
       })
     };
 
-    controller = new GetVideoJobEventsController(mockStatusUseCase, mockSubscriber);
+    sseStreams = new SseStreamRegistry();
+    controller = new GetVideoJobEventsController(mockStatusUseCase, mockSubscriber, sseStreams);
   });
 
   afterEach(() => {
@@ -91,6 +95,7 @@ describe('GetVideoJobEventsController', () => {
       'Connection': 'keep-alive',
       'X-Accel-Buffering': 'no'
     });
+    expect(res.flushHeaders).toHaveBeenCalled();
     expect(mockSubscriber.subscribe).toHaveBeenCalledWith(JOB_ID, 1, expect.any(Function));
 
     req.emit('close');
@@ -205,6 +210,60 @@ describe('GetVideoJobEventsController', () => {
       `data: ${JSON.stringify({ type: 'error', message: 'redis unavailable' })}\n\n`
     );
     expect(res.end).toHaveBeenCalled();
+  });
+
+  it('should register the open stream and leave the registry when the client closes it', async () => {
+    const req = buildRequest();
+    const res = new FakeResponse();
+
+    const handled = controller.handle(req as Request, res as unknown as Response);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(sseStreams.size).toBe(1);
+
+    req.emit('close');
+    await handled;
+
+    expect(sseStreams.size).toBe(0);
+  });
+
+  it('on shutdown, should end the stream with a short retry and release the Redis subscription', async () => {
+    const req = buildRequest();
+    const res = new FakeResponse();
+
+    const handled = controller.handle(req as Request, res as unknown as Response);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await expect(sseStreams.closeAll()).resolves.toBe(1);
+    await handled;
+
+    expect(res.write).toHaveBeenLastCalledWith(`retry: ${SHUTDOWN_RECONNECT_DELAY_MS}\n\n`);
+    expect(res.end).toHaveBeenCalledTimes(1);
+    expect(mockSubscription.unsubscribe).toHaveBeenCalledTimes(1);
+
+    res.write.mockClear();
+    jest.advanceTimersByTime(30_000);
+    expect(res.write).not.toHaveBeenCalled();
+  });
+
+  it('should end a stream opened while the replica is shutting down right away', async () => {
+    await sseStreams.closeAll();
+    const req = buildRequest();
+    const res = new FakeResponse();
+
+    await controller.handle(req as Request, res as unknown as Response);
+
+    // A assinatura é liberada logo depois de o stream terminar, na resolução da promise do subscribe.
+    for (let tick = 0; tick < 5; tick++) {
+      await Promise.resolve();
+    }
+
+    expect(res.writeHead).toHaveBeenCalledWith(200, expect.any(Object));
+    expect(res.write).toHaveBeenCalledWith(`retry: ${SHUTDOWN_RECONNECT_DELAY_MS}\n\n`);
+    expect(res.end).toHaveBeenCalled();
+    expect(mockSubscription.unsubscribe).toHaveBeenCalled();
   });
 
   it('should write a generic error message when the subscription rejects with a non-Error value', async () => {

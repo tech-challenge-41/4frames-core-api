@@ -62,6 +62,14 @@ export const listVideoJobsPath = {
                           type: 'boolean',
                           description:
                             'true quando o job está DONE e tem um .zip disponível em GET /videos/{jobId}/download'
+                        },
+                        progress: {
+                          type: 'number',
+                          minimum: 0,
+                          maximum: 100,
+                          description:
+                            'Percentual do processamento, lido do Redis. Presente só em PROCESSING, depois de o ' +
+                            'worker publicar o primeiro valor; ausente se o Redis não responder'
                         }
                       }
                     }

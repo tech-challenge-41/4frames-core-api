@@ -1,0 +1,171 @@
+{
+  "root_group": {
+    "name": "",
+    "path": "",
+    "id": "d41d8cd98f00b204e9800998ecf8427e",
+    "groups": {},
+    "checks": {
+      "POST /videos → 201": {
+        "name": "POST /videos → 201",
+        "path": "::POST /videos → 201",
+        "id": "b4dfcc29fac471bbb10481c684d6867b",
+        "passes": 10,
+        "fails": 0
+      },
+      "PUT no S3 → 200": {
+        "passes": 10,
+        "fails": 0,
+        "name": "PUT no S3 → 200",
+        "path": "::PUT no S3 → 200",
+        "id": "6d515e74345f70512c1bb90dd6e9efa7"
+      },
+      "POST /complete → 200 QUEUED": {
+        "name": "POST /complete → 200 QUEUED",
+        "path": "::POST /complete → 200 QUEUED",
+        "id": "0a4630f07809ced1639ed701b62efbf7",
+        "passes": 10,
+        "fails": 0
+      }
+    }
+  },
+  "metrics": {
+    "http_req_duration{expected_response:true}": {
+      "avg": 4569.683729645161,
+      "p(95)": 16894.6807725,
+      "max": 17029.026004,
+      "min": 29.372388,
+      "med": 118.00696
+    },
+    "vus": {
+      "min": 5,
+      "max": 10,
+      "value": 5
+    },
+    "vus_max": {
+      "value": 10,
+      "min": 10,
+      "max": 10
+    },
+    "iteration_duration": {
+      "min": 7768.792341,
+      "med": 16574.198977,
+      "avg": 14353.8462546,
+      "p(95)": 17280.33299235,
+      "max": 17285.066118
+    },
+    "http_req_waiting": {
+      "min": 28.997013,
+      "med": 117.85936,
+      "avg": 529.936206,
+      "p(95)": 1809.5124850000002,
+      "max": 2103.461137
+    },
+    "http_req_duration{name:POST /videos}": {
+      "p(95)": 121.67932374999995,
+      "max": 142.231744,
+      "min": 29.372388,
+      "med": 44.3805825,
+      "avg": 58.2441419,
+      "thresholds": {
+        "p(95)<5000": false
+      }
+    },
+    "http_req_blocked": {
+      "p(95)": 28.2652805,
+      "max": 35.349149,
+      "min": 0.008175,
+      "med": 4.745239,
+      "avg": 8.774150580645161
+    },
+    "http_req_failed": {
+      "passes": 0,
+      "fails": 31,
+      "thresholds": {
+        "rate==0": false
+      },
+      "value": 0
+    },
+    "http_req_receiving": {
+      "avg": 0.1827971935483871,
+      "p(95)": 0.37170749999999997,
+      "max": 0.593759,
+      "min": 0.082664,
+      "med": 0.143763
+    },
+    "checks": {
+      "passes": 30,
+      "fails": 0,
+      "thresholds": {
+        "rate==1": false
+      },
+      "value": 1
+    },
+    "http_req_duration{name:PUT S3 (URL pré-assinada)}": {
+      "min": 7276.278265,
+      "med": 16151.256753999998,
+      "avg": 13994.702621499999,
+      "p(95)": 16979.77544935,
+      "max": 17029.026004,
+      "thresholds": {
+        "p(95)<120000": false
+      }
+    },
+    "http_req_connecting": {
+      "avg": 8.151329032258065,
+      "p(95)": 28.1009855,
+      "max": 35.140826,
+      "min": 0,
+      "med": 4.639543
+    },
+    "http_req_sending": {
+      "p(95)": 15276.430583500001,
+      "max": 15430.734819,
+      "min": 0.02655,
+      "med": 0.084207,
+      "avg": 4039.5647264516138
+    },
+    "data_sent": {
+      "count": 344895383,
+      "rate": 19759588.667974085
+    },
+    "http_req_duration{name:POST /videos/:jobId/complete}": {
+      "avg": 101.4914475,
+      "p(95)": 151.0028064,
+      "max": 151.938288,
+      "min": 33.486142,
+      "med": 108.5431355,
+      "thresholds": {
+        "p(95)<5000": false
+      }
+    },
+    "http_reqs": {
+      "count": 31,
+      "rate": 1.7760378332092563
+    },
+    "http_req_tls_handshaking": {
+      "min": 0,
+      "med": 0,
+      "avg": 0,
+      "p(95)": 0,
+      "max": 0
+    },
+    "iterations": {
+      "count": 10,
+      "rate": 0.572915430067502
+    },
+    "http_req_duration": {
+      "min": 29.372388,
+      "med": 118.00696,
+      "avg": 4569.683729645161,
+      "p(95)": 16894.6807725,
+      "max": 17029.026004
+    },
+    "data_received": {
+      "count": 16448,
+      "rate": 942.3312993750274
+    }
+  },
+  "setup_data": {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjIsImlhdCI6MTc5MDYwNjEyOCwiZXhwIjoxNzkwNjI3NzI4fQ.tRZ_wKO2UrF4GRMt6C4rtNBe1ilwOhedUlMs33VOxd8"
+  }
+}

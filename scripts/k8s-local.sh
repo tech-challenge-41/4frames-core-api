@@ -7,14 +7,15 @@
 #   - Front em http://localhost:8080 e API com HPA (metrics-server) em /api, atrás do Ingress (ingress-nginx)
 #   - Worker escalado pelo KEDA pela profundidade da fila SQS
 #
-# Pré-requisitos: docker, kind, kubectl (.env na raiz) e o 4frames-web-app clonado ao lado deste repositório
-# (WEB_APP_DIR aponta para outro lugar)
+# Pré-requisitos: Docker rodando, kind, kubectl, curl e o 4frames-web-app clonado ao lado deste repositório
+# (WEB_APP_DIR aponta para outro lugar). Sem .env na raiz, o script cria um a partir do .env.example.
 #
 # Uso:
-#   ./scripts/k8s-local.sh up       # infra, cluster, imagens, KEDA, migrations e deploy
+#   ./scripts/k8s-local.sh up          # sobe tudo do zero (ou atualiza o que já está de pé) e confere pelo Ingress
 #   ./scripts/k8s-local.sh status
 #   ./scripts/k8s-local.sh logs
-#   ./scripts/k8s-local.sh down     # apaga o cluster (a infra do Compose continua de pé)
+#   ./scripts/k8s-local.sh down        # apaga o cluster (a infra do Compose continua de pé)
+#   ./scripts/k8s-local.sh down --all  # apaga o cluster e derruba a infra do Compose (os volumes ficam)
 #
 set -euo pipefail
 
@@ -29,6 +30,9 @@ KIND_CONFIG="$ROOT_DIR/infra/k8s/kind-config.yaml"
 OVERLAY_DIR="$ROOT_DIR/infra/k8s/overlays/local"
 # O front mora em outro repositório: a imagem web é construída a partir do clone dele.
 WEB_APP_DIR="${WEB_APP_DIR:-$ROOT_DIR/../4frames-web-app}"
+WEB_APP_REPO="https://github.com/tech-challenge-41/4frames-web-app.git"
+# Porta do Ingress no host (kind-config.yaml): o front em /, a API em /api.
+INGRESS_URL="http://localhost:8080"
 # Mesma tag do infra/k8s/base (newTag: local): as imagens são construídas aqui e carregadas no nó.
 # APPS são os Deployments; a imagem migrate é do Job de migrations e seed.
 APPS=(api worker notifier web)
@@ -39,6 +43,14 @@ CONFIG_APPS=(api worker notifier)
 CHANGED_APPS=()
 # Preenchido pelo deploy: 1 quando o apply alterou o ConfigMap ou o Secret.
 CONFIG_CHANGED=0
+# Etapas do up, numeradas na saída.
+UP_STEPS=8
+STEP=0
+
+step() {
+  STEP=$((STEP + 1))
+  printf '\n==> [%d/%d] %s\n' "$STEP" "$UP_STEPS" "$1"
+}
 
 dockerfile_for() {
   case "$1" in
@@ -78,8 +90,9 @@ detect_host_gateway() {
 
 load_env() {
   if [[ ! -f "$ROOT_DIR/.env" ]]; then
-    echo "Erro: $ROOT_DIR/.env não encontrado (cp .env.example .env)" >&2
-    exit 1
+    # Clone novo: os valores do .env.example são os do ambiente local (Compose, LocalStack e Mailpit).
+    cp "$ROOT_DIR/.env.example" "$ROOT_DIR/.env"
+    echo "Criado o .env a partir do .env.example"
   fi
   set -a
   # tr: um .env salvo com CRLF no Windows deixaria \r no fim de cada valor.
@@ -98,27 +111,34 @@ load_env() {
 }
 
 require_tools() {
-  for bin in docker kind kubectl; do
+  for bin in docker kind kubectl curl; do
     if ! command -v "$bin" >/dev/null 2>&1; then
       echo "Erro: $bin não encontrado no PATH" >&2
       exit 1
     fi
   done
+  if ! docker info >/dev/null 2>&1; then
+    echo "Erro: o Docker não está respondendo. Abra o Docker Desktop (ou inicie o daemon) e rode de novo." >&2
+    exit 1
+  fi
+  if ! docker compose version >/dev/null 2>&1; then
+    echo "Erro: docker compose (v2) não encontrado" >&2
+    exit 1
+  fi
 }
 
 # Sem o clone do front, o Deployment web ficaria sem imagem e o up só falharia no fim, no rollout.
 require_web_app() {
   if [[ ! -f "$WEB_APP_DIR/Dockerfile" ]]; then
-    echo "Erro: $WEB_APP_DIR/Dockerfile não encontrado." >&2
-    echo "      Clone o 4frames-web-app ao lado do 4frames-core-api, numa branch com o Dockerfile (develop)," >&2
-    echo "      ou aponte WEB_APP_DIR para o clone." >&2
+    echo "Erro: $WEB_APP_DIR/Dockerfile não encontrado. O front é construído a partir do clone dele:" >&2
+    echo "        git clone $WEB_APP_REPO \"$(dirname "$ROOT_DIR")/4frames-web-app\"" >&2
+    echo "      Ou aponte WEB_APP_DIR para um clone em outro lugar, numa branch com o Dockerfile (develop)." >&2
     exit 1
   fi
   WEB_APP_DIR="$(cd "$WEB_APP_DIR" && pwd)"
 }
 
 up_infra() {
-  echo "Subindo infra no Compose (postgres redis mailpit localstack)"
   # --wait: o Job de migrations precisa do Postgres saudável, e os apps, do LocalStack com filas e bucket.
   # As migrations rodam no cluster (Job migrate); o serviço migrate do Compose fica para o desenvolvimento.
   docker compose -f "$ROOT_DIR/docker-compose.yml" up -d --wait postgres redis mailpit localstack
@@ -310,17 +330,35 @@ apply_app() {
   done
 }
 
+# Confere pelo mesmo caminho do navegador: o Ingress leva / ao front e /api à API, e o /ready da API só
+# responde 200 com Postgres e Redis alcançáveis. Logo depois dos rollouts o Ingress ainda pode estar
+# atualizando a lista de pods, daí as tentativas.
+verify_ingress() {
+  local url
+  for url in "$INGRESS_URL/" "$INGRESS_URL/api/ready"; do
+    for _ in $(seq 1 60); do
+      if curl -fsS -o /dev/null --max-time 5 "$url"; then
+        echo "OK  $url"
+        continue 2
+      fi
+      sleep 2
+    done
+    echo "Erro: $url não respondeu 200 em 2 minutos (./scripts/k8s-local.sh status)" >&2
+    exit 1
+  done
+}
+
 show_validation() {
+  local elapsed=$SECONDS
   cat <<MSG
 
-╭──────────────────────────────────────────────────────────────╮
-│  Setup local pronto                                          │
-╰──────────────────────────────────────────────────────────────╯
+==> 4Frames no ar em $((elapsed / 60)) min $((elapsed % 60)) s
 
-  Front:   http://localhost:8080 (pelo Ingress)
-  API:     http://localhost:8080/api/health-check
-  Docs:    http://localhost:8080/api/api-docs/
-  Mailpit: http://localhost:8025
+  Front:      ${INGRESS_URL}  (login do seed: admin@admin.com / 123456)
+  API:        ${INGRESS_URL}/api/health-check
+  Swagger:    ${INGRESS_URL}/api/api-docs/
+  Mailpit:    http://localhost:8025  (e-mails de conclusão e de falha)
+  LocalStack: http://localhost:4566  (S3 e SQS)
 
   # Pods, Ingress, HPA e ScaledObject
   ./scripts/k8s-local.sh status
@@ -328,40 +366,78 @@ show_validation() {
   # Demo de escala: envie vários vídeos e observe o worker
   kubectl -n ${NAMESPACE} get pods -l app.kubernetes.io/name=worker -w
 
-  # Cleanup
+  # Derrubar: só o cluster, ou o cluster e a infra do Compose
   ./scripts/k8s-local.sh down
+  ./scripts/k8s-local.sh down --all
 
 MSG
 }
 
 cmd_up() {
-  load_env
   require_tools
   require_web_app
+  load_env
+
+  step "Infra no Compose: Postgres, Redis, Mailpit e LocalStack"
   up_infra
+
+  step "Cluster Kind '$CLUSTER_NAME'"
   up_cluster
   local gateway
   gateway="$(detect_host_gateway)"
   echo "Host gateway para pods: $gateway"
+
+  step "Imagens: api, worker, notifier, web e migrate"
   build_and_load
+
+  step "metrics-server (métricas de CPU para o HPA)"
   install_metrics_server
+
+  step "ingress-nginx (${INGRESS_URL})"
   install_ingress_nginx
+
+  step "KEDA (escala do worker pela fila)"
   install_keda
+
+  step "Deploy: Secret, migrations e seed, apps"
   apply_app "$gateway"
+
+  step "Verificação pelo Ingress"
+  verify_ingress
+
   show_validation
 }
 
 cmd_down() {
+  local scope="${1:-}"
+  if [[ -n "$scope" && "$scope" != "--all" ]]; then
+    usage
+    exit 1
+  fi
+
   if kind get clusters | grep -qx "$CLUSTER_NAME"; then
     kind delete cluster --name "$CLUSTER_NAME"
   else
     echo "Cluster '$CLUSTER_NAME' não existe"
   fi
+
+  if [[ "$scope" != "--all" ]]; then
+    echo "A infra do Compose continua de pé (./scripts/k8s-local.sh down --all derruba também)"
+    return
+  fi
+  # O Compose lê o .env ao carregar o arquivo. Sem ele, o up nunca rodou neste clone e não há o que derrubar.
+  if [[ ! -f "$ROOT_DIR/.env" ]]; then
+    echo "Sem .env: nada a derrubar no Compose"
+    return
+  fi
+  # Sem -v: os dados do Postgres ficam no volume. O LocalStack já não guarda objetos nem mensagens.
+  echo "Derrubando a infra do Compose (o volume do Postgres fica)"
+  docker compose -f "$ROOT_DIR/docker-compose.yml" down
 }
 
 cmd_logs() {
   kubectl config use-context "kind-$CLUSTER_NAME"
-  for app in "${APPS[@]}" migrate; do
+  for app in "${APPS[@]}" migrate expire-uploads; do
     echo "=== $app ==="
     kubectl -n "$NAMESPACE" logs -l "app.kubernetes.io/name=$app" --tail=50 || true
   done
@@ -369,16 +445,20 @@ cmd_logs() {
 
 cmd_status() {
   kubectl config use-context "kind-$CLUSTER_NAME"
-  kubectl -n "$NAMESPACE" get pods,jobs,svc,ingress,hpa
+  kubectl -n "$NAMESPACE" get pods,jobs,cronjobs,svc,ingress,hpa
   kubectl -n "$NAMESPACE" get scaledobjects.keda.sh 2>/dev/null || true
   kubectl -n "$NAMESPACE" top pods 2>/dev/null \
     || echo '(metrics-server sem dados ainda: a primeira coleta leva perto de um minuto)'
 }
 
+usage() {
+  echo "Uso: $0 [up|status|logs|down [--all]]" >&2
+}
+
 case "${1:-up}" in
   up)     cmd_up ;;
-  down)   cmd_down ;;
+  down)   cmd_down "${2:-}" ;;
   logs)   cmd_logs ;;
   status) cmd_status ;;
-  *) echo "Uso: $0 [up|down|logs|status]"; exit 1 ;;
+  *) usage; exit 1 ;;
 esac

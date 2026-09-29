@@ -20,6 +20,7 @@ resources:
   - web-service.yaml
   - web-ingress.yaml
   - migrate-job.yaml
+  - expire-uploads-cronjob.yaml
 
 images:
   - name: 4frames-api
