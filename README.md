@@ -343,6 +343,9 @@ todos na raiz do zip.
 - **Vídeo inválido**: `FAILED` com `failure_reason` legível, `job.failed` e a mensagem é apagada.
 - **Falha transiente** (S3, banco, ffmpeg morto): a mensagem volta à fila em 60 s. Depois de 3 recebimentos
   vai para a DLQ, e o próprio worker marca o job `FAILED` com `Falha após 3 tentativas`.
+- **Upload confirmado tarde**: se os 3 recebimentos se esgotam esperando o `complete`, a mensagem chega à DLQ com o
+  job em `UPLOAD_PENDING` ou `QUEUED`, nunca tentado. O worker a devolve à fila de uploads como mensagem nova, até 3
+  vezes (atributo `requeue-count`), em vez de marcar `FAILED` ou descartar.
 - **Visibilidade**: enquanto processa, o worker renova a visibilidade da mensagem a cada
   `VISIBILITY_TIMEOUT_SECONDS / 2`. Se o worker cair, a mensagem reaparece e outro worker retoma o job.
 - **Encerramento**: no SIGTERM (`docker compose stop worker`, scale-down do KEDA) para de receber, termina o

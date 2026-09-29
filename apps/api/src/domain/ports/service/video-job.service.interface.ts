@@ -34,8 +34,13 @@ export interface ListByUserResult {
 export interface IVideoJobService {
   createUploadPendingJob(input: CreateUploadPendingJobInput): Promise<VideoJobRecord>;
   findById(jobId: string): Promise<VideoJobRecord | null>;
-  updateStatus(jobId: string, status: string): Promise<VideoJobRecord>;
   listByUser(userId: number, pagination: ListByUserPagination): Promise<ListByUserResult>;
+  /**
+   * Confirma o upload levando o job de UPLOAD_PENDING a QUEUED com escrita condicional (`updateMany` restrito a
+   * UPLOAD_PENDING do próprio dono), sem pisar num cancelamento ou numa expiração concorrente. Retorna `null`
+   * quando a condição não bateu — job de outro dono, inexistente, ou que já saiu de UPLOAD_PENDING.
+   */
+  queueIfUploadPending(jobId: string, userId: number): Promise<VideoJobRecord | null>;
   /**
    * Cancela o job com escrita condicional (`updateMany` restrito a UPLOAD_PENDING/QUEUED do próprio
    * dono), evitando pisar numa transição concorrente do worker (ex.: markProcessing). Retorna `null`

@@ -33,12 +33,7 @@ export class CompleteVideoJobUseCase implements IUseCase {
     }
 
     if (job.status !== 'UPLOAD_PENDING') {
-      throw new DomainError({
-        message: 'Video job is not awaiting upload confirmation',
-        type: DomainErrorTypes.INVALID_STATE,
-        context: CompleteVideoJobUseCase.name,
-        data: { status: job.status }
-      });
+      throw this.notAwaitingConfirmationError({ status: job.status });
     }
 
     const extension = contentTypeToExtension(job.contentType);
@@ -65,12 +60,27 @@ export class CompleteVideoJobUseCase implements IUseCase {
       });
     }
 
-    const updatedJob = await this.videoJobService.updateStatus(jobId, 'QUEUED');
+    const queuedJob = await this.videoJobService.queueIfUploadPending(jobId, userId);
+
+    if (!queuedJob) {
+      // O status ainda era UPLOAD_PENDING na leitura acima, mas a escrita condicional não bateu: um
+      // cancelamento ou a rotina de expiração levou o job a EXPIRED entre o findById e agora.
+      throw this.notAwaitingConfirmationError({ jobId });
+    }
 
     return {
-      jobId: updatedJob.id,
-      status: updatedJob.status,
-      fileName: updatedJob.fileName
+      jobId: queuedJob.id,
+      status: queuedJob.status,
+      fileName: queuedJob.fileName
     };
+  }
+
+  private notAwaitingConfirmationError(data: Record<string, unknown>): DomainError {
+    return new DomainError({
+      message: 'Video job is not awaiting upload confirmation',
+      type: DomainErrorTypes.INVALID_STATE,
+      context: CompleteVideoJobUseCase.name,
+      data
+    });
   }
 }
