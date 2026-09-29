@@ -84,9 +84,29 @@ Detalhes dos manifestos, do script e do CD: [infra/k8s/README.md](./infra/k8s/RE
 
 ## Documentação
 
-[Decisões de arquitetura](./docs/adr/README.md): o [ADR-001](./docs/adr/ADR-001-arquitetura.pdf) define a
-arquitetura, e o [ADR-002](./docs/adr/ADR-002-execucao-local-e-monorepo.md) registra a execução local, o monorepo e o
-que mudou em relação ao ADR-001.
+[Decisões de arquitetura](./docs/adr/README.md):
+
+| ADR                                                                   | Assunto                                                                                |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| [ADR-001](./docs/adr/ADR-001-arquitetura.pdf)                         | A arquitetura: três planos, fluxo ponta a ponta e garantias                            |
+| [ADR-002](./docs/adr/ADR-002-execucao-local-e-monorepo.md)            | Execução sem AWS, monorepo e job com UUID, com o que substitui cada serviço gerenciado |
+| [ADR-003](./docs/adr/ADR-003-cluster-local-kind-compose-kustomize.md) | Cluster Kind, infraestrutura no Compose, Kustomize, Ingress, migrations e expiração    |
+| [ADR-004](./docs/adr/ADR-004-escala-e-encerramento-sem-perda.md)      | HPA, KEDA e encerramento gracioso de API e worker                                      |
+| [ADR-005](./docs/adr/ADR-005-ciclo-de-vida-do-job.md)                 | Estados do job, cancelamento, expiração, falhas, progresso e notificação               |
+| [ADR-006](./docs/adr/ADR-006-autenticacao-e-acesso.md)                | Login, token, autorização por dono, URLs pré-assinadas e segredos                      |
+| [ADR-007](./docs/adr/ADR-007-qualidade-testes-e-entrega.md)           | Camadas de teste, gates de cobertura, evidências, CI/CD e fluxo de trabalho            |
+
+Além dos ADRs: o [README do Kubernetes](./infra/k8s/README.md) (manifestos, script e CD), as
+[evidências de carga e escala](./docs/evidence/README.md) e o OpenAPI, servido pela API em `/api-docs`.
+
+### Scripts de criação dos recursos
+
+| Recurso               | Scripts                                                                                                                                                                                                                                            |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Banco (PostgreSQL)    | Migrations em SQL, aplicadas em ordem por `prisma migrate deploy`: [`packages/shared/prisma/migrations/*/migration.sql`](./packages/shared/prisma/migrations). Usuários de teste: [`packages/shared/prisma/seeds`](./packages/shared/prisma/seeds) |
+| S3 e SQS (LocalStack) | [`infra/localstack/init`](./infra/localstack/init): bucket com CORS, fila com DLQ e a notificação `videos/` → fila                                                                                                                                 |
+| Infraestrutura local  | [`docker-compose.yml`](./docker-compose.yml): Postgres, Redis, LocalStack e Mailpit                                                                                                                                                                |
+| Cluster e aplicação   | [`scripts/k8s-local.sh`](./scripts/k8s-local.sh) e os manifestos em [`infra/k8s`](./infra/k8s), com o Job que aplica migrations e seed no cluster                                                                                                  |
 
 ## Estrutura
 
@@ -323,6 +343,9 @@ todos na raiz do zip.
 - **Vídeo inválido**: `FAILED` com `failure_reason` legível, `job.failed` e a mensagem é apagada.
 - **Falha transiente** (S3, banco, ffmpeg morto): a mensagem volta à fila em 60 s. Depois de 3 recebimentos
   vai para a DLQ, e o próprio worker marca o job `FAILED` com `Falha após 3 tentativas`.
+- **Upload confirmado tarde**: se os 3 recebimentos se esgotam esperando o `complete`, a mensagem chega à DLQ com o
+  job em `UPLOAD_PENDING` ou `QUEUED`, nunca tentado. O worker a devolve à fila de uploads como mensagem nova, até 3
+  vezes (atributo `requeue-count`), em vez de marcar `FAILED` ou descartar.
 - **Visibilidade**: enquanto processa, o worker renova a visibilidade da mensagem a cada
   `VISIBILITY_TIMEOUT_SECONDS / 2`. Se o worker cair, a mensagem reaparece e outro worker retoma o job.
 - **Encerramento**: no SIGTERM (`docker compose stop worker`, scale-down do KEDA) para de receber, termina o

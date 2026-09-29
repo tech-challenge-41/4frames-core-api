@@ -31,7 +31,7 @@ tests/load/                        k6 scenarios (grafana/k6 container) + run-sce
 docs/evidence/                     versioned results of the load scenarios (charts, pod timelines, counts)
 scripts/k8s-local.sh               the one command for the full stack: `up` (Compose infra, Kind, images incl. web from ../4frames-web-app, metrics-server, ingress-nginx, KEDA, migrate Job, overlay local, check through the Ingress), `down [--all]`
 .github/workflows/                 ci.yml (test→lint→type-check→k8s→build) + cd.yml (release-* → GHCR + Kind smoke)
-docs/adr/                          architecture decisions: ADR-001 (PDF, AWS design) + ADR-002 (local run, monorepo, UUID)
+docs/adr/                          architecture decisions: ADR-001 (PDF, AWS design), ADR-002 (local run, monorepo, UUID), ADR-003..007 (cluster, scaling, job lifecycle, auth, quality); a new decision gets a new ADR
 tsconfig.base.json                 compiler options shared by every package
 eslint.config.js, .prettierrc.js   one lint config for the whole repo
 docker-compose.yml, .env           one Compose file and one .env at the root
@@ -111,7 +111,10 @@ relative to `apps/api/src`.
 2. **Use case**: `application/use-case/<aggregate>/<action>/<action>.usecase.ts` +
    `.dto.ts` (separate `InputDTO`/`OutputDTO` interfaces). Constructor takes an
    object of its dependencies (services), typed by their port interfaces — see
-   `CompleteVideoJobUseCase` for the pattern of validating state before mutating it.
+   `CompleteVideoJobUseCase` for the pattern of validating state before mutating it. The status
+   transition itself is a conditional `updateMany` with the expected status in the `WHERE`
+   (`queueIfUploadPending`, `cancelIfPending`), never an `update` by id: a `null` from the port means a
+   concurrent cancel, expiration or worker won, and becomes the same `INVALID_STATE` error.
 3. **Validator** (body/query, if any): Zod schema in
    `infra/http/validators/<aggregate>/<name>.validator.ts`. Path params are parsed in the
    controller, not by `validateMiddleware` (it only validates `req.body` today): a `:jobId`
@@ -343,7 +346,8 @@ depends only on the interfaces in `processing/ports.ts`; adapters live next to i
 config/worker-env.ts          zod schema for every worker variable (defaults: FRAME_FPS=1, FRAME_FORMAT=png, WORKER_MAX_PARALLEL_JOBS=2)
 consumer/sqs-consumer.ts      generic SQS loop: long polling, up to maxParallelJobs handlers in parallel (Promises), visibility heartbeat, stop()
 consumer/video-upload-handler.ts  S3 event → use case (ignores s3:TestEvent, deletes malformed messages)
-consumer/dlq-handler.ts       dead-lettered message → FAILED "Falha após 3 tentativas" + job.failed
+consumer/dlq-handler.ts       dead-lettered message: PROCESSING → FAILED "Falha após 3 tentativas" + job.failed; never attempted → back to the queue
+consumer/upload-requeuer.ts   SendMessage of the same body to the uploads queue, `requeue-count` message attribute
 processing/                   use case, ports, InvalidVideoError + FAILURE_REASONS, source key parsing
 ffmpeg/                       run-process (spawn), ffprobe validation, frame extraction with -progress
 storage/ zip/ repo/ progress/ S3 (lib-storage), archiver, Prisma, Redis publisher
@@ -360,6 +364,12 @@ storage/ zip/ repo/ progress/ S3 (lib-storage), archiver, Prisma, Redis publishe
   `PROCESSING`, so a message that reappears after a worker crash resumes the job.
 - The S3 event fires at the end of the PUT, before the front calls `complete`. A job still in
   `UPLOAD_PENDING` is polled for up to 30 s, then the message is returned to the queue.
+- When the 3 receives run out waiting for `complete`, the message reaches the DLQ with the job still in
+  `UPLOAD_PENDING`, or in `QUEUED` if `complete` came after the last wait. Neither was ever attempted (only
+  `markProcessing` leaves `QUEUED`), so the DLQ handler sends the same body back to the uploads queue as a new message
+  (30 s delay for `UPLOAD_PENDING`, none for `QUEUED`) and only then deletes it from the DLQ. The `requeue-count`
+  attribute caps it at `MAX_REQUEUES` (3, ~13 min), which only matters without the expiration routine. Only a
+  `PROCESSING` job becomes `FAILED` in the DLQ; don't fail a `QUEUED` one there (ADR-005 §2.2).
 - `stop()` aborts the long poll and waits for the current message; `isAlive()` stays true while that job
   finishes, so a liveness probe never kills a pod during graceful shutdown.
 - **Parallel jobs**: one `SqsConsumer` on the uploads queue runs up to `WORKER_MAX_PARALLEL_JOBS` handlers
@@ -453,9 +463,8 @@ ordered by `created_at desc`).
 
 **Infrastructure-level (per ADR-002):**
 
-- The local Kind cluster (`scripts/k8s-local.sh`) serves the front and the API through ingress-nginx on
-  http://localhost:8080 (`/` → the `web` nginx image built from the sibling `4frames-web-app` clone,
-  `/api` → API with the prefix stripped, in a separate Ingress because of its `rewrite-target`), with
-  metrics-server for the API HPA, KEDA on the worker and migrations + seed as the `migrate` Job. The CD
-  Kind (`overlays/ci`) drops the `web` Deployment: that image belongs to the web-app repo.
 - No Prometheus/Grafana; no metrics exported beyond what's in application logs.
+- The end-to-end suite and the k6 scenarios run only against a local cluster, not in CI, and the CD smoke
+  proves the images start, not the video flow (ADR-007).
+
+The accepted trade-offs of the cluster, scaling, job lifecycle and auth are in ADR-003 to ADR-006.

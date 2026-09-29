@@ -2,7 +2,8 @@
 
 ## Status
 
-Aceito. Substitui partes do [ADR-001](./ADR-001-arquitetura.pdf) (ver seção 4).
+Aceito. Substitui partes do [ADR-001](./ADR-001-arquitetura.pdf) (ver seção 4). As decisões tomadas depois, na
+implementação, estão nos ADR-003 a ADR-007 (ver o [índice](./README.md)).
 
 ## Data
 
@@ -30,22 +31,22 @@ Três pontos pesaram na revisão:
 
 Os serviços gerenciados da AWS dão lugar a equivalentes locais, e a orquestração do ADR-001 continua em Kubernetes:
 
-| ADR-001                                 | Substituto local                                                                        | Situação em 17/09                                                         |
-| --------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| EKS                                     | Cluster Kubernetes local                                                                | Previsto                                                                  |
-| ALB (AWS Load Balancer Controller)      | Ingress controller do cluster                                                           | Previsto                                                                  |
-| HPA na API                              | HPA na API, com metrics-server                                                          | Previsto                                                                  |
-| KEDA (scaler `aws-sqs-queue`) no worker | KEDA com o mesmo scaler, apontado para o LocalStack (`awsEndpoint`)                     | Previsto                                                                  |
-| Segredos no Kubernetes + IRSA           | Secrets e ConfigMaps; credenciais fixas do LocalStack no lugar do IRSA                  | Previsto                                                                  |
-| ECR + deploy no EKS                     | Imagens no GitHub Container Registry por tag `release-*`; deploy no cluster local       | CI/CD + GHCR implementados; cluster local via Kind/manifestos `infra/k8s` |
-| S3 com Event Notifications              | LocalStack S3: bucket, CORS e notificação `videos/` → SQS                               | Implementado                                                              |
-| SQS + DLQ                               | LocalStack SQS, redrive para a DLQ após 3 recebimentos                                  | Implementado                                                              |
-| RDS PostgreSQL 16                       | Container `postgres:16`                                                                 | Implementado                                                              |
-| ElastiCache Redis                       | Container `redis:7`                                                                     | Implementado (progresso e eventos do worker)                              |
-| SES                                     | Mailpit (SMTP local com caixa web)                                                      | Container no ar; uso pelo notifier previsto                               |
-| Terraform                               | Scripts de init do LocalStack, migrations do Prisma e manifestos Kubernetes versionados | Scripts e migrations implementados                                        |
-| CloudFront no download                  | URL pré-assinada de GET do S3                                                           | Previsto                                                                  |
-| OpenTelemetry + Datadog + CloudWatch    | Prometheus + Grafana                                                                    | Previsto                                                                  |
+| ADR-001                                 | Substituto local                                                                        | Situação                                                                                                          |
+| --------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| EKS                                     | Cluster Kubernetes local                                                                | Implementado: Kind ([ADR-003](./ADR-003-cluster-local-kind-compose-kustomize.md))                                 |
+| ALB (AWS Load Balancer Controller)      | Ingress controller do cluster                                                           | Implementado: ingress-nginx ([ADR-003](./ADR-003-cluster-local-kind-compose-kustomize.md))                        |
+| HPA na API                              | HPA na API, com metrics-server                                                          | Implementado ([ADR-004](./ADR-004-escala-e-encerramento-sem-perda.md))                                            |
+| KEDA (scaler `aws-sqs-queue`) no worker | KEDA com o mesmo scaler, apontado para o LocalStack (`awsEndpoint`)                     | Implementado ([ADR-004](./ADR-004-escala-e-encerramento-sem-perda.md))                                            |
+| Segredos no Kubernetes + IRSA           | Secrets e ConfigMaps; credenciais fixas do LocalStack no lugar do IRSA                  | Implementado ([ADR-006](./ADR-006-autenticacao-e-acesso.md))                                                      |
+| ECR + deploy no EKS                     | Imagens no GitHub Container Registry por tag `release-*`; deploy no cluster local       | Implementado: CD com deploy num Kind efêmero ([ADR-007](./ADR-007-qualidade-testes-e-entrega.md))                 |
+| S3 com Event Notifications              | LocalStack S3: bucket, CORS e notificação `videos/` → SQS                               | Implementado                                                                                                      |
+| SQS + DLQ                               | LocalStack SQS, redrive para a DLQ após 3 recebimentos                                  | Implementado                                                                                                      |
+| RDS PostgreSQL 16                       | Container `postgres:16`                                                                 | Implementado                                                                                                      |
+| ElastiCache Redis                       | Container `redis:7`                                                                     | Implementado: progresso, eventos do job e SSE                                                                     |
+| SES                                     | Mailpit (SMTP local com caixa web)                                                      | Implementado: e-mail do notificador na conclusão e na falha                                                       |
+| Terraform                               | Scripts de init do LocalStack, migrations do Prisma e manifestos Kubernetes versionados | Implementado: migrations e seed num Job do cluster ([ADR-003](./ADR-003-cluster-local-kind-compose-kustomize.md)) |
+| CloudFront no download                  | URL pré-assinada de GET do S3                                                           | Implementado                                                                                                      |
+| OpenTelemetry + Datadog + CloudWatch    | Prometheus + Grafana                                                                    | Previsto                                                                                                          |
 
 Consequências diretas no código:
 
@@ -67,15 +68,12 @@ Consequências diretas no código:
 - `notifier`, rotina de expiração de uploads (uma execução por vez) e front, com o Ingress roteando `/` para o front e
   `/api` para a API.
 
-**Docker Compose** é o ambiente de desenvolvimento: Postgres, Redis, Mailpit, LocalStack, migrations e os apps em modo
-dev. Não é o mecanismo de escala da solução.
+**Docker Compose** é o ambiente de desenvolvimento: Postgres, Redis, Mailpit, LocalStack, migrations e os apps (API e
+notificador em modo dev, worker compilado). Não é o mecanismo de escala da solução.
 
-Ficam a cargo de quem implementa o cluster, e são registradas neste ADR quando tomadas:
-
-- A distribuição do cluster local (k3d, kind, minikube ou o Kubernetes do Docker Desktop).
-- Onde rodam Postgres, Redis, LocalStack e Mailpit: no Compose, fora do cluster, como os serviços gerenciados ficavam
-  fora do EKS no ADR-001, ou dentro do cluster.
-- O formato dos manifestos: Kustomize ou Helm.
+Este ADR deixava em aberto a distribuição do cluster, onde rodam Postgres, Redis, LocalStack e Mailpit e o formato dos
+manifestos. As escolhas estão no [ADR-003](./ADR-003-cluster-local-kind-compose-kustomize.md): Kind, infraestrutura no
+Compose, fora do cluster, e Kustomize em `infra/k8s/`.
 
 Valem para qualquer escolha: o navegador precisa alcançar o LocalStack pelo endereço de `S3_PUBLIC_ENDPOINT_URL`, e as
 imagens privadas do GHCR exigem `imagePullSecret` ou importação local no cluster.
@@ -118,10 +116,12 @@ O worker segue o projeto base apresentado aos investidores: `ffmpeg -vf fps=1`, 
 - Fluxo de branches `feature → develop → main`, com tag `release-*` em `main` a cada entrega.
 - Os repositórios são privados no plano GitHub Free, que não oferece branch protection. A revisão obrigatória vale por
   regra do grupo (`CONTRIBUTING.md`), não por bloqueio do GitHub.
-- Sem SonarQube/SonarCloud: o gate de qualidade é o `coverageThreshold` do Jest no CI.
+- Sem SonarQube/SonarCloud: o gate de qualidade é o limite mínimo de cobertura do Jest e do Vitest no CI.
 - O CI (`.github/workflows/ci.yml`) roda test → lint → type-check → validação dos manifestos Kubernetes → build das
-  imagens `api`, `worker` e `notifier`. A cada tag `release-*`, o CD (`.github/workflows/cd.yml`) publica as imagens no
-  GHCR, sobe um Kind efêmero no GitHub Actions, aplica `infra/k8s` e faz smoke test. Situação: implementado.
+  imagens `api`, `worker`, `notifier` e `migrate`. A cada tag `release-*`, o CD (`.github/workflows/cd.yml`) publica as
+  imagens no GHCR, sobe um Kind efêmero no GitHub Actions, carrega as imagens dos apps, aplica o overlay `ci` de
+  `infra/k8s` e faz smoke test.
+  Situação: implementado. Camadas de teste, gates e fluxo de trabalho: [ADR-007](./ADR-007-qualidade-testes-e-entrega.md).
 - Hook de pre-commit com lint-staged (ESLint e Prettier nos arquivos staged). Situação: implementado.
 
 ## 3. Consequências
