@@ -31,7 +31,7 @@ tests/load/                        k6 scenarios (grafana/k6 container) + run-sce
 docs/evidence/                     versioned results of the load scenarios (charts, pod timelines, counts)
 scripts/k8s-local.sh               the one command for the full stack: `up` (Compose infra, Kind, images incl. web from ../4frames-web-app, metrics-server, ingress-nginx, KEDA, migrate Job, overlay local, check through the Ingress), `down [--all]`
 .github/workflows/                 ci.yml (test→lint→type-check→k8s→build) + cd.yml (release-* → GHCR + Kind smoke)
-docs/adr/                          architecture decisions: ADR-001 (PDF, AWS design) + ADR-002 (local run, monorepo, UUID)
+docs/adr/                          architecture decisions: ADR-001 (PDF, AWS design), ADR-002 (local run, monorepo, UUID), ADR-003..007 (cluster, scaling, job lifecycle, auth, quality); a new decision gets a new ADR
 tsconfig.base.json                 compiler options shared by every package
 eslint.config.js, .prettierrc.js   one lint config for the whole repo
 docker-compose.yml, .env           one Compose file and one .env at the root
@@ -453,9 +453,8 @@ ordered by `created_at desc`).
 
 **Infrastructure-level (per ADR-002):**
 
-- The local Kind cluster (`scripts/k8s-local.sh`) serves the front and the API through ingress-nginx on
-  http://localhost:8080 (`/` → the `web` nginx image built from the sibling `4frames-web-app` clone,
-  `/api` → API with the prefix stripped, in a separate Ingress because of its `rewrite-target`), with
-  metrics-server for the API HPA, KEDA on the worker and migrations + seed as the `migrate` Job. The CD
-  Kind (`overlays/ci`) drops the `web` Deployment: that image belongs to the web-app repo.
 - No Prometheus/Grafana; no metrics exported beyond what's in application logs.
+- The end-to-end suite and the k6 scenarios run only against a local cluster, not in CI, and the CD smoke
+  proves the images start, not the video flow (ADR-007).
+
+The accepted trade-offs of the cluster, scaling, job lifecycle and auth are in ADR-003 to ADR-006.
