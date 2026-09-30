@@ -6,9 +6,11 @@
 #   - Migrations e seed num Job do cluster, antes dos apps
 #   - Front em http://localhost:8080 e API com HPA (metrics-server) em /api, atrás do Ingress (ingress-nginx)
 #   - Worker escalado pelo KEDA pela profundidade da fila SQS
+#   - Datadog Agent no cluster via Helm (visão Kubernetes + OTLP), como no garagio-api
 #
-# Pré-requisitos: Docker rodando, kind, kubectl, curl e o 4frames-web-app clonado ao lado deste repositório
+# Pré-requisitos: Docker rodando, kind, kubectl, helm, curl e o 4frames-web-app clonado ao lado deste repositório
 # (WEB_APP_DIR aponta para outro lugar). Sem .env na raiz, o script cria um a partir do .env.example.
+# O .env precisa de DD_API_KEY para o Agent no Kind.
 #
 # Uso:
 #   ./scripts/k8s-local.sh up          # sobe tudo do zero (ou atualiza o que já está de pé) e confere pelo Ingress
@@ -25,9 +27,11 @@ METRICS_SERVER_VERSION="${METRICS_SERVER_VERSION:-0.9.0}"
 # O projeto ingress-nginx foi arquivado: 1.15.1 é a última versão publicada.
 INGRESS_NGINX_VERSION="${INGRESS_NGINX_VERSION:-1.15.1}"
 NAMESPACE="4frames"
+NAMESPACE_DD="datadog"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KIND_CONFIG="$ROOT_DIR/infra/k8s/kind-config.yaml"
 OVERLAY_DIR="$ROOT_DIR/infra/k8s/overlays/local"
+DATADOG_VALUES="$ROOT_DIR/infra/k8s/datadog-values.yaml"
 # O front mora em outro repositório: a imagem web é construída a partir do clone dele.
 WEB_APP_DIR="${WEB_APP_DIR:-$ROOT_DIR/../4frames-web-app}"
 WEB_APP_REPO="https://github.com/tech-challenge-41/4frames-web-app.git"
@@ -44,7 +48,7 @@ CHANGED_APPS=()
 # Preenchido pelo deploy: 1 quando o apply alterou o ConfigMap ou o Secret.
 CONFIG_CHANGED=0
 # Etapas do up, numeradas na saída.
-UP_STEPS=8
+UP_STEPS=9
 STEP=0
 
 step() {
@@ -108,10 +112,14 @@ load_env() {
   AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-test}"
   AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-test}"
   AWS_REGION="${AWS_REGION:-us-east-1}"
+  APP_ENV="${APP_ENV:-development}"
+  # Nome do cluster na UI Datadog (mesmo placeholder do datadog-values.yaml).
+  EKS_CLUSTER_NAME="${EKS_CLUSTER_NAME:-$CLUSTER_NAME}"
+  export EKS_CLUSTER_NAME APP_ENV
 }
 
 require_tools() {
-  for bin in docker kind kubectl curl; do
+  for bin in docker kind kubectl helm curl envsubst; do
     if ! command -v "$bin" >/dev/null 2>&1; then
       echo "Erro: $bin não encontrado no PATH" >&2
       exit 1
@@ -141,6 +149,7 @@ require_web_app() {
 up_infra() {
   # --wait: o Job de migrations precisa do Postgres saudável, e os apps, do LocalStack com filas e bucket.
   # As migrations rodam no cluster (Job migrate); o serviço migrate do Compose fica para o desenvolvimento.
+  # Datadog Agent do Kind vem via Helm (não o datadog-agent do Compose — esse é para `docker compose` sem Kind).
   docker compose -f "$ROOT_DIR/docker-compose.yml" up -d --wait postgres redis mailpit localstack
 
   if [[ -n "$(docker compose -f "$ROOT_DIR/docker-compose.yml" ps -q api worker notifier 2>/dev/null)" ]]; then
@@ -248,6 +257,25 @@ install_keda() {
     AWS_REGION="${AWS_REGION}" \
     AWS_EC2_METADATA_DISABLED=true
   kubectl rollout status deployment/keda-operator -n keda --timeout=120s
+}
+
+install_datadog() {
+  : "${DD_API_KEY:?DD_API_KEY ausente no .env (necessária para o Agent no Kind)}"
+
+  echo "Instalando Datadog Agent via Helm (namespace $NAMESPACE_DD)"
+  kubectl create namespace "$NAMESPACE_DD" --dry-run=client -o yaml | kubectl apply -f -
+  kubectl -n "$NAMESPACE_DD" create secret generic datadog-agent-secret \
+    --from-literal=api-key="$DD_API_KEY" \
+    --dry-run=client -o yaml | kubectl apply -f -
+
+  helm repo add datadog https://helm.datadoghq.com >/dev/null 2>&1 || true
+  helm repo update >/dev/null
+
+  envsubst < "$DATADOG_VALUES" > /tmp/4frames-datadog-values.yaml
+  helm upgrade --install datadog-agent datadog/datadog \
+    --namespace "$NAMESPACE_DD" \
+    --values /tmp/4frames-datadog-values.yaml \
+    --wait --timeout 8m
 }
 
 # O `kubectl apply` imprime "configured" para o objeto que mudou; "unchanged" e "created" não pedem restart.
@@ -359,9 +387,13 @@ show_validation() {
   Swagger:    ${INGRESS_URL}/api/api-docs/
   Mailpit:    http://localhost:8025  (e-mails de conclusão e de falha)
   LocalStack: http://localhost:4566  (S3 e SQS)
+  Datadog:    https://app.us5.datadoghq.com
+              APM > Services (4frames-api / worker / notifier)
+              Infrastructure > Kubernetes > Pods (Agent Helm no Kind)
 
-  # Pods, Ingress, HPA e ScaledObject
+  # Pods, Ingress, HPA, ScaledObject e Agent
   ./scripts/k8s-local.sh status
+  kubectl get pods -n datadog
 
   # Demo de escala: envie vários vídeos e observe o worker
   kubectl -n ${NAMESPACE} get pods -l app.kubernetes.io/name=worker -w
@@ -398,6 +430,9 @@ cmd_up() {
 
   step "KEDA (escala do worker pela fila)"
   install_keda
+
+  step "Datadog Agent (Helm — pods na UI Kubernetes)"
+  install_datadog
 
   step "Deploy: Secret, migrations e seed, apps"
   apply_app "$gateway"
@@ -437,6 +472,8 @@ cmd_down() {
 
 cmd_logs() {
   kubectl config use-context "kind-$CLUSTER_NAME"
+  echo "=== Datadog Agent ==="
+  kubectl -n "$NAMESPACE_DD" logs -l app.kubernetes.io/component=agent --tail=30 2>/dev/null || true
   for app in "${APPS[@]}" migrate expire-uploads; do
     echo "=== $app ==="
     kubectl -n "$NAMESPACE" logs -l "app.kubernetes.io/name=$app" --tail=50 || true
@@ -447,6 +484,8 @@ cmd_status() {
   kubectl config use-context "kind-$CLUSTER_NAME"
   kubectl -n "$NAMESPACE" get pods,jobs,cronjobs,svc,ingress,hpa
   kubectl -n "$NAMESPACE" get scaledobjects.keda.sh 2>/dev/null || true
+  echo "=== datadog ==="
+  kubectl -n "$NAMESPACE_DD" get pods 2>/dev/null || echo '(Agent ainda não instalado)'
   kubectl -n "$NAMESPACE" top pods 2>/dev/null \
     || echo '(metrics-server sem dados ainda: a primeira coleta leva perto de um minuto)'
 }

@@ -43,3 +43,14 @@ data:
   MAIL_FROM: 4Frames <no-reply@4frames.local>
   # Link do job no e-mail: endereço do front pelo Ingress.
   WEB_APP_URL: http://localhost:8080
+  # OpenTelemetry → Datadog (ligado no overlay local; Agent no Compose em :4318).
+  OTEL_ENABLED: 'false'
+  OTEL_EXPORTER_OTLP_TARGET: agent
+  OTEL_LOGS_EXPORTER: otlp
+  OTEL_TRACES_EXPORTER: otlp
+  OTEL_METRICS_EXPORTER: otlp
+  OTEL_SERVICE_VERSION: '1.0.0'
+  DD_SITE: us5.datadoghq.com
+  DD_ENV: production
+  DD_VERSION: '1.0.0'
+  DD_METRICS_ENABLED: 'true'

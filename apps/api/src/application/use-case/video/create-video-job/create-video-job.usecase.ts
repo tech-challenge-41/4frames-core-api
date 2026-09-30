@@ -1,3 +1,5 @@
+import { type MonitoringMetrics } from '@4frames/shared/monitoring';
+
 import { VideoValidationError } from '@/application/error/video-validation-error';
 import { type IVideoJobService } from '@/domain/ports/service/video-job.service.interface';
 import { type IVideoStorageService } from '@/domain/ports/service/video-storage.service.interface';
@@ -13,21 +15,25 @@ interface CreateVideoJobUseCaseDependencies {
   videoStorageService: IVideoStorageService;
   /** Validade da URL pré-assinada (UPLOAD_URL_TTL_SECONDS, lido no composition root). */
   uploadUrlExpiresInSeconds?: number;
+  monitoring?: MonitoringMetrics;
 }
 
 export class CreateVideoJobUseCase implements IUseCase {
   private readonly videoJobService: IVideoJobService;
   private readonly videoStorageService: IVideoStorageService;
   private readonly uploadUrlExpiresInSeconds: number;
+  private readonly monitoring: MonitoringMetrics | undefined;
 
   constructor({
     videoJobService,
     videoStorageService,
-    uploadUrlExpiresInSeconds = DEFAULT_UPLOAD_URL_EXPIRES_IN_SECONDS
+    uploadUrlExpiresInSeconds = DEFAULT_UPLOAD_URL_EXPIRES_IN_SECONDS,
+    monitoring
   }: CreateVideoJobUseCaseDependencies) {
     this.videoJobService = videoJobService;
     this.videoStorageService = videoStorageService;
     this.uploadUrlExpiresInSeconds = uploadUrlExpiresInSeconds;
+    this.monitoring = monitoring;
   }
 
   public async execute({
@@ -51,6 +57,8 @@ export class CreateVideoJobUseCase implements IUseCase {
       contentType,
       this.uploadUrlExpiresInSeconds
     );
+
+    this.monitoring?.incrementVideoJobsCreated();
 
     return {
       jobId: job.id,

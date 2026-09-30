@@ -43,9 +43,10 @@ docker-compose.yml, .env           one Compose file and one .env at the root
   between apps (S3 keys, Redis channels, event payloads, statuses). App-specific code stays in
   the app. No Express, HTTP or request-scoped code in `shared`.
 - Import through subpaths, never deep paths: `@4frames/shared/prisma`, `/env`, `/logger`,
-  `/jobs`, `/aws`, `/redis`, `/process`, `/health`. The root `@4frames/shared` only re-exports the
-  light modules (env, jobs, logger, process, health). Prisma, AWS and Redis stay behind subpaths so importing
-  a contract never opens a database connection or loads an SDK.
+  `/monitoring`, `/monitoring/load` (OTel side-effect), `/jobs`, `/aws`, `/redis`, `/process`, `/health`.
+  The root `@4frames/shared` only re-exports the light modules (env, jobs, logger, process, health).
+  Prisma, AWS, Redis and monitoring stay behind subpaths so importing a contract never opens a
+  database connection or starts the OTel SDK.
 - Apps resolve `@4frames/shared` at runtime and in `tsc` through the package `exports`, which
   point to `dist`. After changing `shared`, run `pnpm --filter @4frames/shared build` (or keep
   `pnpm dev:shared` running). Jest maps `@4frames/shared/*` straight to `packages/shared/src`,
@@ -459,11 +460,13 @@ ordered by `created_at desc`).
 **Application-level (per ADR-001):**
 
 - `correlation_id` on `video_jobs` is still unused for correlated logging across
-  api/worker/notifier (field exists; propagation not wired end-to-end).
+  api/worker/notifier (field exists; propagation not wired end-to-end). OTel already
+  injects `trace_id`/`span_id` into Pino when `OTEL_ENABLED=true`.
 
 **Infrastructure-level (per ADR-002):**
 
-- No Prometheus/Grafana; no metrics exported beyond what's in application logs.
+- Datadog Agent no Kind via Helm (`infra/k8s/datadog-values.yaml`, instalado pelo `k8s-local.sh`).
+  O Agent do Compose permanece só para apps fora do cluster.
 - The end-to-end suite and the k6 scenarios run only against a local cluster, not in CI, and the CD smoke
   proves the images start, not the video flow (ADR-007).
 

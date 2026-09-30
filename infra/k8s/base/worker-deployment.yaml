@@ -31,6 +31,15 @@ spec:
                 name: 4frames-config
             - secretRef:
                 name: 4frames-secret
+          env:
+            - name: OTEL_SERVICE_NAME
+              value: 4frames-worker
+            - name: DD_SERVICE
+              value: 4frames-worker
+            - name: DD_AGENT_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
           volumeMounts:
             - name: tmp
               mountPath: /tmp/4frames

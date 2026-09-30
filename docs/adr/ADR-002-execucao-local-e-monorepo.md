@@ -31,22 +31,22 @@ Três pontos pesaram na revisão:
 
 Os serviços gerenciados da AWS dão lugar a equivalentes locais, e a orquestração do ADR-001 continua em Kubernetes:
 
-| ADR-001                                 | Substituto local                                                                        | Situação                                                                                                          |
-| --------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| EKS                                     | Cluster Kubernetes local                                                                | Implementado: Kind ([ADR-003](./ADR-003-cluster-local-kind-compose-kustomize.md))                                 |
-| ALB (AWS Load Balancer Controller)      | Ingress controller do cluster                                                           | Implementado: ingress-nginx ([ADR-003](./ADR-003-cluster-local-kind-compose-kustomize.md))                        |
-| HPA na API                              | HPA na API, com metrics-server                                                          | Implementado ([ADR-004](./ADR-004-escala-e-encerramento-sem-perda.md))                                            |
-| KEDA (scaler `aws-sqs-queue`) no worker | KEDA com o mesmo scaler, apontado para o LocalStack (`awsEndpoint`)                     | Implementado ([ADR-004](./ADR-004-escala-e-encerramento-sem-perda.md))                                            |
-| Segredos no Kubernetes + IRSA           | Secrets e ConfigMaps; credenciais fixas do LocalStack no lugar do IRSA                  | Implementado ([ADR-006](./ADR-006-autenticacao-e-acesso.md))                                                      |
-| ECR + deploy no EKS                     | Imagens no GitHub Container Registry por tag `release-*`; deploy no cluster local       | Implementado: CD com deploy num Kind efêmero ([ADR-007](./ADR-007-qualidade-testes-e-entrega.md))                 |
-| S3 com Event Notifications              | LocalStack S3: bucket, CORS e notificação `videos/` → SQS                               | Implementado                                                                                                      |
-| SQS + DLQ                               | LocalStack SQS, redrive para a DLQ após 3 recebimentos                                  | Implementado                                                                                                      |
-| RDS PostgreSQL 16                       | Container `postgres:16`                                                                 | Implementado                                                                                                      |
-| ElastiCache Redis                       | Container `redis:7`                                                                     | Implementado: progresso, eventos do job e SSE                                                                     |
-| SES                                     | Mailpit (SMTP local com caixa web)                                                      | Implementado: e-mail do notificador na conclusão e na falha                                                       |
-| Terraform                               | Scripts de init do LocalStack, migrations do Prisma e manifestos Kubernetes versionados | Implementado: migrations e seed num Job do cluster ([ADR-003](./ADR-003-cluster-local-kind-compose-kustomize.md)) |
-| CloudFront no download                  | URL pré-assinada de GET do S3                                                           | Implementado                                                                                                      |
-| OpenTelemetry + Datadog + CloudWatch    | Prometheus + Grafana                                                                    | Previsto                                                                                                          |
+| ADR-001                                 | Substituto local                                                                        | Situação                                                                                                                            |
+| --------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| EKS                                     | Cluster Kubernetes local                                                                | Implementado: Kind ([ADR-003](./ADR-003-cluster-local-kind-compose-kustomize.md))                                                   |
+| ALB (AWS Load Balancer Controller)      | Ingress controller do cluster                                                           | Implementado: ingress-nginx ([ADR-003](./ADR-003-cluster-local-kind-compose-kustomize.md))                                          |
+| HPA na API                              | HPA na API, com metrics-server                                                          | Implementado ([ADR-004](./ADR-004-escala-e-encerramento-sem-perda.md))                                                              |
+| KEDA (scaler `aws-sqs-queue`) no worker | KEDA com o mesmo scaler, apontado para o LocalStack (`awsEndpoint`)                     | Implementado ([ADR-004](./ADR-004-escala-e-encerramento-sem-perda.md))                                                              |
+| Segredos no Kubernetes + IRSA           | Secrets e ConfigMaps; credenciais fixas do LocalStack no lugar do IRSA                  | Implementado ([ADR-006](./ADR-006-autenticacao-e-acesso.md))                                                                        |
+| ECR + deploy no EKS                     | Imagens no GitHub Container Registry por tag `release-*`; deploy no cluster local       | Implementado: CD com deploy num Kind efêmero ([ADR-007](./ADR-007-qualidade-testes-e-entrega.md))                                   |
+| S3 com Event Notifications              | LocalStack S3: bucket, CORS e notificação `videos/` → SQS                               | Implementado                                                                                                                        |
+| SQS + DLQ                               | LocalStack SQS, redrive para a DLQ após 3 recebimentos                                  | Implementado                                                                                                                        |
+| RDS PostgreSQL 16                       | Container `postgres:16`                                                                 | Implementado                                                                                                                        |
+| ElastiCache Redis                       | Container `redis:7`                                                                     | Implementado: progresso, eventos do job e SSE                                                                                       |
+| SES                                     | Mailpit (SMTP local com caixa web)                                                      | Implementado: e-mail do notificador na conclusão e na falha                                                                         |
+| Terraform                               | Scripts de init do LocalStack, migrations do Prisma e manifestos Kubernetes versionados | Implementado: migrations e seed num Job do cluster ([ADR-003](./ADR-003-cluster-local-kind-compose-kustomize.md))                   |
+| CloudFront no download                  | URL pré-assinada de GET do S3                                                           | Implementado                                                                                                                        |
+| OpenTelemetry + Datadog + CloudWatch    | OTel nos apps + Datadog Agent no Compose (`:4318`); Kind usa o Agent do host            | Implementado local ([DATADOG_README.md](../../DATADOG_README.md)); Agent no EKS via Helm (`infra/k8s/datadog-values.yaml`) previsto |
 
 Consequências diretas no código:
 
@@ -168,7 +168,7 @@ stateless atrás de um balanceador, Redis para progresso, PostgreSQL para status
 - O ALB, que passa a ser o Ingress controller do cluster local.
 - O download pela CloudFront no passo 8 do fluxo, que passa a ser URL pré-assinada do S3.
 - IRSA e OAC (seção 2.3 do ADR-001): credenciais fixas do LocalStack e bucket privado acessado por URL pré-assinada.
-- Observabilidade com OpenTelemetry, Datadog e CloudWatch (seção 2.3 do ADR-001).
+- CloudWatch como backend de observabilidade na nuvem (localmente: OpenTelemetry + Datadog Agent — ver DATADOG_README.md).
 - "Um repositório por serviço", Terraform, SonarQube, push no ECR e deploy no EKS (seção 2.4 do ADR-001), conforme as
   seções 2.3 e 2.6 acima.
 - A regra "1 frame a cada N segundos", que passa a ser a da seção 2.5 acima.
