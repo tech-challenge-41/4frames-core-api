@@ -4,6 +4,9 @@
 #   (api, worker, notifier, migrate + postgres, redis, mailpit, localstack)
 #   Apps no host (pnpm dev): docker compose up -d postgres redis mailpit localstack
 #
+# O Datadog Agent é opcional (profile `datadog`): com COMPOSE_PROFILES=datadog, DD_API_KEY e OTEL_ENABLED=true no
+# .env, os dois comandos acima também sobem o `datadog-agent`, e os apps mandam traces, logs e métricas para ele.
+#
 # O .env da raiz usa endereços do host (localhost), que servem para os apps rodando com pnpm.
 # Os serviços de app deste arquivo sobrescrevem só os hosts internos (bloco x-container-endpoints),
 # então o mesmo .env funciona nos dois modos.
@@ -34,11 +37,9 @@ x-container-endpoints: &container-endpoints
   # comente estas duas linhas — aí valem SMTP_HOST/SMTP_PORT do .env.
   SMTP_HOST: mailpit
   SMTP_PORT: '1025'
-  # OTel → Datadog Agent neste Compose (mesmo padrão do garagio-api).
+  # OTel → Datadog Agent deste Compose (mesmo padrão do garagio-api). Quem liga é o OTEL_ENABLED do .env.
   DD_AGENT_HOST: datadog-agent
   OTEL_EXPORTER_OTLP_TARGET: agent
-  OTEL_ENABLED: 'true'
-  DD_METRICS_ENABLED: 'true'
 
 services:
   # One-shot: aplica migrations e seed antes da API subir.
@@ -77,8 +78,10 @@ services:
         condition: service_healthy
       localstack:
         condition: service_healthy
+      # Opcional: sem o profile datadog, o Agent não sobe e a dependência é ignorada.
       datadog-agent:
         condition: service_started
+        required: false
 
   # Consome a fila de uploads e a DLQ, extrai os frames com ffmpeg e grava zip, status e eventos.
   # Roda compilado (sem hot reload): o ts-node-dev sai ao receber SIGTERM sem esperar o processo filho,
@@ -123,8 +126,10 @@ services:
         condition: service_healthy
       localstack:
         condition: service_healthy
+      # Opcional: sem o profile datadog, o Agent não sobe e a dependência é ignorada.
       datadog-agent:
         condition: service_started
+        required: false
 
   # Assina jobs.events no Redis e envia e-mail (SMTP do .env) em job.done / job.failed.
   notifier:
@@ -153,8 +158,10 @@ services:
         condition: service_started
       worker:
         condition: service_started
+      # Opcional: sem o profile datadog, o Agent não sobe e a dependência é ignorada.
       datadog-agent:
         condition: service_started
+        required: false
 
   postgres:
     image: postgres:16-alpine
@@ -220,15 +227,17 @@ services:
 
   # Agent Datadog (OTLP HTTP :4318). Mesmo padrão do garagio-api: apps exportam OTLP → Agent → us5.
   # Apps no host (pnpm dev): DD_AGENT_HOST=localhost. Apps no Compose: DD_AGENT_HOST=datadog-agent.
+  # Só sobe com o profile `datadog` (COMPOSE_PROFILES=datadog no .env): sem DD_API_KEY, o container sairia com erro.
   datadog-agent:
     image: gcr.io/datadoghq/agent:7
+    profiles: [datadog]
     container_name: 4frames-datadog-agent
     env_file: .env
     environment:
       DD_HOSTNAME: 4frames-local
       DD_TAGS: 'project:4frames env:development'
       DD_CONTAINER_EXCLUDE: 'name:4frames-datadog-agent'
-      DD_API_KEY: ${DD_API_KEY}
+      DD_API_KEY: ${DD_API_KEY:-}
       DD_SITE: ${DD_SITE:-us5.datadoghq.com}
       DD_APM_ENABLED: 'true'
       DD_APM_NON_LOCAL_TRAFFIC: 'true'

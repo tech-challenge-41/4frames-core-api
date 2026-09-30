@@ -1,0 +1,13 @@
+{
+  "name": "4Frames: DLQ com mensagens há 5 min",
+  "type": "query alert",
+  "query": "min(last_5m):max:frames.sqs.messages_visible{queue:dlq} > 0",
+  "message": "A DLQ `4frames-video-uploads-dlq` tem mensagens há 5 minutos. O worker drena a DLQ em segundos (marca FAILED ou devolve à fila), então o consumidor dela parou. Veja os logs do `4frames-worker` (`./scripts/k8s-local.sh logs`) e o ADR-005.",
+  "tags": ["project:4frames", "managed-by:repo"],
+  "options": {
+    "thresholds": { "critical": 0 },
+    "notify_no_data": false,
+    "require_full_window": false,
+    "include_tags": true
+  }
+}

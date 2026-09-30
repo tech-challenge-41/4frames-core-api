@@ -1,0 +1,135 @@
+{
+  "title": "4Frames",
+  "description": "Fila, réplicas e jobs do 4Frames. Versionado em infra/datadog/dashboard.json e aplicado por scripts/datadog-apply.mjs: o próximo apply sobrescreve o que for mudado aqui.",
+  "layout_type": "ordered",
+  "widgets": [
+    {
+      "definition": {
+        "type": "timeseries",
+        "title": "Fila de uploads e workers",
+        "show_legend": true,
+        "requests": [
+          {
+            "q": "max:frames.sqs.messages_visible{queue:uploads}",
+            "display_type": "bars",
+            "metadata": [{ "expression": "max:frames.sqs.messages_visible{queue:uploads}", "alias_name": "Na fila" }]
+          },
+          {
+            "q": "max:frames.sqs.messages_in_flight{queue:uploads}",
+            "display_type": "bars",
+            "metadata": [
+              { "expression": "max:frames.sqs.messages_in_flight{queue:uploads}", "alias_name": "Em processamento" }
+            ]
+          },
+          {
+            "q": "max:kubernetes_state.deployment.replicas_available{kube_namespace:4frames,kube_deployment:worker}",
+            "display_type": "line",
+            "metadata": [
+              {
+                "expression": "max:kubernetes_state.deployment.replicas_available{kube_namespace:4frames,kube_deployment:worker}",
+                "alias_name": "Workers"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "type": "timeseries",
+        "title": "Réplicas da API",
+        "show_legend": true,
+        "requests": [
+          {
+            "q": "max:kubernetes_state.deployment.replicas_available{kube_namespace:4frames,kube_deployment:api}",
+            "display_type": "line",
+            "metadata": [
+              {
+                "expression": "max:kubernetes_state.deployment.replicas_available{kube_namespace:4frames,kube_deployment:api}",
+                "alias_name": "API"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "type": "timeseries",
+        "title": "Jobs criados, concluídos e com falha",
+        "show_legend": true,
+        "requests": [
+          {
+            "q": "sum:frames.video_jobs.created{*}.as_count()",
+            "display_type": "bars",
+            "metadata": [{ "expression": "sum:frames.video_jobs.created{*}.as_count()", "alias_name": "Criados" }]
+          },
+          {
+            "q": "sum:frames.video_jobs.done{*}.as_count()",
+            "display_type": "bars",
+            "metadata": [{ "expression": "sum:frames.video_jobs.done{*}.as_count()", "alias_name": "Concluídos" }]
+          },
+          {
+            "q": "sum:frames.video_jobs.failed{*}.as_count()",
+            "display_type": "bars",
+            "metadata": [{ "expression": "sum:frames.video_jobs.failed{*}.as_count()", "alias_name": "Com falha" }]
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "type": "timeseries",
+        "title": "Falhas por motivo",
+        "show_legend": true,
+        "requests": [
+          {
+            "q": "sum:frames.video_jobs.failed{*} by {reason}.as_count()",
+            "display_type": "bars"
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "type": "timeseries",
+        "title": "Tempo de processamento de um job (ms)",
+        "show_legend": true,
+        "requests": [
+          {
+            "q": "p50:frames.video_jobs.processing_duration{*}",
+            "display_type": "line",
+            "metadata": [{ "expression": "p50:frames.video_jobs.processing_duration{*}", "alias_name": "p50" }]
+          },
+          {
+            "q": "p95:frames.video_jobs.processing_duration{*}",
+            "display_type": "line",
+            "metadata": [{ "expression": "p95:frames.video_jobs.processing_duration{*}", "alias_name": "p95" }]
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "type": "query_value",
+        "title": "Jobs presos em PROCESSING (sem escrita há 15 min)",
+        "precision": 0,
+        "requests": [{ "q": "max:frames.video_jobs.stuck_processing{*}", "aggregator": "last" }]
+      }
+    },
+    {
+      "definition": {
+        "type": "timeseries",
+        "title": "DLQ",
+        "show_legend": true,
+        "requests": [
+          {
+            "q": "max:frames.sqs.messages_visible{queue:dlq}",
+            "display_type": "bars",
+            "metadata": [{ "expression": "max:frames.sqs.messages_visible{queue:dlq}", "alias_name": "Na DLQ" }]
+          }
+        ]
+      }
+    }
+  ]
+}

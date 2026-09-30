@@ -1,2 +1,4 @@
 export { DatadogOTLPExporter, OTLPExporterType } from './datadog-otlp';
-export { createMonitoringMetrics, metricsEnabled, type MonitoringMetrics } from './metrics';
+export { metricsEnabled, otelEnabled } from './flags';
+export { createMonitoringMetrics, type MonitoringMetrics, type QueueDepth } from './metrics';
+export { shutdownOtel } from './otel';

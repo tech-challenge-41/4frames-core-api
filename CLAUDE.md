@@ -23,17 +23,19 @@ packages/
       redis/      createRedisClient (lazyConnect)
       process/    registerGracefulShutdown
       health/     HealthServer: GET /healthz for the worker and notifier liveness probes
-      monitoring/ OpenTelemetry SDK bootstrap (monitoring/load.ts is a side-effect import), OTLP exporters to the Datadog Agent, job metrics
+      monitoring/ OpenTelemetry: flags, SDK start (monitoring/load.ts is the side-effect import), OTLP exporters to the Datadog Agent, job and queue metrics
       generated/  Prisma Client output (gitignored, created by `pnpm db:generate`)
 infra/localstack/init/             LocalStack bootstrap scripts
+infra/datadog/                     Datadog dashboard.json and monitors/*.json, applied by scripts/datadog-apply.mjs
 infra/k8s/                         Kustomize: base (api + HPA, worker + KEDA, notifier, web, Ingress /api and /, migrate Job, expire-uploads CronJob), overlays local/ci, kind-config.yaml, datadog-values.yaml (Helm values of the Datadog Agent)
 tests/e2e/     @4frames/e2e        end-to-end Jest suite against the running cluster (`pnpm test:e2e`; not part of `pnpm test`)
 tests/load/                        k6 scenarios (grafana/k6 container) + run-scenario.sh, sampler.mjs and chart.mjs → docs/evidence/<scenario>/
 docs/evidence/                     versioned results of the load scenarios (charts, pod timelines, counts)
-scripts/k8s-local.sh               the one command for the full stack: `up` (Compose infra, Kind, images incl. web from ../4frames-web-app, metrics-server, ingress-nginx, KEDA, Datadog Agent via Helm, migrate Job, overlay local, check through the Ingress), `down [--all]`
+scripts/k8s-local.sh               the one command for the full stack: `up` (Compose infra, Kind, images incl. web from ../4frames-web-app, metrics-server, ingress-nginx, KEDA, Datadog Agent via Helm only with DD_API_KEY, migrate Job, overlay local, check through the Ingress), `down [--all]`
+scripts/datadog-apply.mjs          creates or updates the Datadog dashboard and monitors from infra/datadog (DD_API_KEY + DD_APP_KEY)
 .github/workflows/                 ci.yml (test→lint→type-check→k8s→build) + cd.yml (release-* → GHCR + Kind smoke)
 docs/adr/                          architecture decisions: ADR-001 (PDF, AWS design), ADR-002 (local run, monorepo, UUID), ADR-003..008 (cluster, scaling, job lifecycle, auth, quality, observability); a new decision gets a new ADR
-DATADOG_README.md                  Datadog Agent per environment, OTel variables, custom metrics
+DATADOG_README.md                  how to turn Datadog on per environment, OTel variables, custom metrics, dashboard and monitors
 tsconfig.base.json                 compiler options shared by every package
 eslint.config.js, .prettierrc.js   one lint config for the whole repo
 docker-compose.yml, .env           one Compose file and one .env at the root
@@ -55,7 +57,7 @@ docker-compose.yml, .env           one Compose file and one .env at the root
   so tests never need a build.
 - Every app entrypoint starts with `import '@4frames/shared/env/load';` so the root `.env` is
   loaded before any module reads `process.env`. Variables already set (Compose, CI) win. The next
-  import is `@4frames/shared/monitoring/load` (see "Observability").
+  one is `import '@4frames/shared/monitoring/load';` (see "Observability").
 - When you add a subpath, update `exports` in `packages/shared/package.json` and keep the
   subpath name equal to the folder name under `src/` (the Jest mapper relies on that).
 
@@ -309,11 +311,12 @@ producer, only a subscriber.
   as is. The `migrate` and `api` Compose services load the same file and override only the internal
   hosts through the `x-container-endpoints` block (`postgres`, `localstack`, `redis`, `mailpit`,
   `datadog-agent`). When you add an env var that points to another container, add its override there too.
-  That block also forces `OTEL_ENABLED: 'true'`, so the `.env` cannot turn OTel off inside Compose.
-- `docker compose up -d --build` runs everything, including the `datadog-agent` service (needs `DD_API_KEY`
-  in `.env`); `docker compose up -d postgres redis mailpit localstack` runs only infrastructure for host
-  development — add `datadog-agent`, or set `OTEL_ENABLED=false`, since the `.env.example` turns OTel on.
-  Both modes bind the API to port 3000.
+  Flags stay in the `.env`: never force `OTEL_ENABLED` or `DD_METRICS_ENABLED` in that block.
+- `docker compose up -d --build` runs everything; `docker compose up -d postgres redis mailpit localstack`
+  runs only infrastructure for host development. Both modes bind the API to port 3000.
+- The `datadog-agent` service is in the `datadog` profile and the apps depend on it with `required: false`:
+  it only starts with `COMPOSE_PROFILES=datadog` in `.env` (or when named on the command line), because
+  without `DD_API_KEY` the container exits with an error. The `.env.example` ships with OTel off.
 - `migrate` is a one-shot service (`pnpm db:deploy && pnpm db:seed`); `api` waits for it with
   `service_completed_successfully`. Neither has `container_name`, so services can be scaled later.
 
@@ -393,31 +396,48 @@ storage/ zip/ repo/ progress/ S3 (lib-storage), archiver, Prisma, Redis publishe
 
 Decision and trade-offs in ADR-008; per-environment setup and variables in `DATADOG_README.md`.
 
-- **Bootstrap**: `import '@4frames/shared/monitoring/load'` starts the OTel `NodeSDK` as a side effect when
-  `OTEL_ENABLED=true`. Put it right after `env/load` and before every other import: auto-instrumentation only
-  patches modules required after the SDK starts (Pino, the AWS SDK, `pg`, `ioredis`, HTTP). `fs` and `net`
-  instrumentations are off.
+- **Bootstrap**: `import '@4frames/shared/monitoring/load';` starts the OTel `NodeSDK` (`startOtel()`) as a side
+  effect when `OTEL_ENABLED=true`. It is a bare import right after `env/load`, before every other import:
+  auto-instrumentation only patches modules required after the SDK starts (Pino, the AWS SDK, `pg`, `ioredis`,
+  HTTP), and `import/order` would sort a named import from it below `/aws`, `/health` and `/logger`. Everything
+  else (`shutdownOtel`, `createMonitoringMetrics`, the flags) comes from `@4frames/shared/monitoring`, which starts
+  nothing. `fs` and `net` instrumentations are off.
 - **Shutdown**: every `onShutdown` (and the `--once` path of `cron/main.ts`) awaits `shutdownOtel()` last, after
   closing its own resources, so buffered spans, logs and metrics are flushed. `shutdownOtel` never registers
   signal handlers itself — `registerGracefulShutdown` owns SIGTERM.
 - **Destination**: `OTEL_EXPORTER_OTLP_TARGET=agent` sends to `http://$DD_AGENT_HOST:4318/v1/{traces,logs,metrics}`
   with no key in the app. Any other value sends straight to `otlp.$DD_SITE` with `DD_API_KEY` (not used by any
   environment). `DD_AGENT_HOST` is `localhost` in `.env`, `datadog-agent` in Compose (`x-container-endpoints`) and
-  `status.hostIP` in each Deployment (the Helm Agent DaemonSet listens on hostPort 4318).
-- **Service name**: `OTEL_SERVICE_NAME` (fallback `DD_SERVICE`). Compose and each Deployment set it per app; the
+  `status.hostIP` in each Deployment and in the `expire-uploads` CronJob (the Helm Agent DaemonSet listens on
+  hostPort 4318). A pod that turns OTel on without `DD_AGENT_HOST` exports to `datadog-agent`, which does not exist
+  in the cluster.
+- **Service name**: `OTEL_SERVICE_NAME` (fallback `DD_SERVICE`). Compose, each Deployment and the CronJob
+  (`4frames-expire-uploads`) set it per process; the
   single `.env` says `4frames-api`, so host runs of the worker/notifier need `OTEL_SERVICE_NAME=4frames-worker` etc.
   `APP_ENV` becomes `deployment.environment`.
 - **Cluster config**: `OTEL_ENABLED: 'false'` in the `base` ConfigMap, `'true'` in `overlays/local`; `overlays/ci`
-  (CD smoke) inherits `false` and has no Agent.
-- **Business metrics**: `MonitoringMetrics` from `@4frames/shared/monitoring` (`frames.video_jobs.created` in
-  `CreateVideoJobUseCase`; `.done`, `.failed` with a `reason` attribute and the `.processing_duration` histogram in
-  the worker's `ProcessVideoJobUseCase`). Build it in the composition root with `createMonitoringMetrics()` — a no-op
-  unless `DD_METRICS_ENABLED` is true — and inject it as an **optional** dependency (`monitoring?`). Use cases never
-  import `@opentelemetry/*`, and their tests pass nothing. A new metric gets a method on the interface, the no-op and
-  `OtelMetrics`, plus a case in `metrics.spec.ts`.
+  (CD smoke) inherits `false` and has no Agent. Without `DD_API_KEY`, `k8s-local.sh` skips the Agent (and the
+  `helm`/`envsubst` check) and rewrites `OTEL_ENABLED` to `false` in the rendered overlay.
+- **Business metrics**: `MonitoringMetrics` from `@4frames/shared/monitoring`:
+  - `frames.video_jobs.created` in `CreateVideoJobUseCase`;
+  - `.done`, `.processing_duration` (histogram) and `.failed` in the worker's `ProcessVideoJobUseCase`, plus
+    `.failed` in the DLQ handler — counted only when `markFailed` actually wrote `FAILED`;
+  - `frames.sqs.messages_visible` / `_in_flight` (gauges, `queue: uploads|dlq`) from the worker's
+    `QueueDepthMonitor`, every 15 s;
+  - `frames.video_jobs.stuck_processing` (gauge) from `ExpireAbandonedUploadsUseCase`, every pass.
+- Build it once per process in the composition root with `createMonitoringMetrics()` (each instance registers its
+  own gauges) and inject it as an **optional** dependency (`monitoring?`). It is a no-op with `enabled: false` unless
+  both `DD_METRICS_ENABLED` and `OTEL_ENABLED` are on; skip work done only to measure (like the SQS polling) when
+  it is disabled. Use cases never import `@opentelemetry/*`, and their tests pass nothing or a jest mock
+  (`createFakeMonitoring` in the worker). A new metric gets a method on the interface, the no-op and `OtelMetrics`,
+  plus a case in `metrics.spec.ts`, which reads the values through an in-memory `MetricReader`.
 - Metric names must start with a letter (`frames.*`, never `4frames.*`: Datadog drops them). Keep attribute values
-  bounded — an id or a number in an attribute creates one time series per value.
-- `monitoring/otel.ts` and `monitoring/load.ts` are excluded from the `shared` coverage (side-effect bootstrap);
+  bounded — an id or a number in an attribute creates one time series per value. The failure `reason` goes through
+  `failureMetricReason` (worker `processing/errors.ts`), which maps the user-facing text to a fixed snake_case code.
+- **Dashboard and monitors** live in `infra/datadog/` as Datadog API JSON. `scripts/datadog-apply.mjs` (run with
+  `node --env-file=.env`) upserts them: dashboard by title, monitor by name; `--dry-run` only validates. A new
+  metric that matters for operation gets a widget there, and edits made in the Datadog UI are overwritten.
+- `monitoring/otel.ts` and `monitoring/load.ts` are excluded from the `shared` coverage (they start the real SDK);
   the exporters and metrics have specs.
 
 ## Docker
@@ -464,8 +484,9 @@ pnpm db:deploy        # prisma migrate deploy
 pnpm db:generate      # prisma generate
 pnpm db:seed          # seed test users
 pnpm --filter @4frames/api expire --once   # one pass of the abandoned-upload expiration (no --once: every minute)
-docker compose up -d --build                             # full stack, API in a container, plus the Datadog Agent
-docker compose up -d postgres redis mailpit localstack   # infra only, apps via pnpm dev:* (add datadog-agent, or OTEL_ENABLED=false)
+docker compose up -d --build                             # full stack, API in a container (Datadog Agent only with COMPOSE_PROFILES=datadog)
+docker compose up -d postgres redis mailpit localstack   # infra only, apps via pnpm dev:* (add datadog-agent to turn it on)
+node --env-file=.env scripts/datadog-apply.mjs [--dry-run]   # upsert the Datadog dashboard and monitors
 ```
 
 A Husky `pre-commit` hook runs lint-staged on staged files: `eslint --fix` for `*.ts`/`*.js` and
@@ -501,20 +522,14 @@ ordered by `created_at desc`).
 - `correlation_id` on `video_jobs` is still unused for correlated logging across
   api/worker/notifier (field exists; propagation not wired end-to-end). OTel injects
   `trace_id`/`span_id` into Pino logs, but a job's trace stops at the queue: the SQS message is
-  written by S3, not by the API, so the worker starts a new trace.
-- In `apps/worker/src/main.ts` and `apps/notifier/src/main.ts`, `monitoring/load` is imported after
-  `@4frames/shared/aws`, `/health` and `/logger`, against the bootstrap rule in "Observability". Until
-  that is fixed, check in Datadog whether their logs carry `trace_id` and whether AWS SDK spans show up.
-- `frames.video_jobs.failed` counts only rejected videos (`InvalidVideoError`); a job failed by the DLQ
-  handler ("Falha após 3 tentativas") is not counted. Its `reason` attribute is the user-facing text,
-  and `FAILURE_REASONS.tooLong` embeds the duration, so that reason is unbounded.
+  written by S3, not by the API, so the worker starts a new trace. The `jobId` in the logs is what
+  links them.
 
 **Infrastructure-level (per ADR-002 and ADR-008):**
 
-- `./scripts/k8s-local.sh up` requires `DD_API_KEY` (a Datadog account) plus `helm` and `envsubst`;
-  there is no way to bring the cluster up without the Datadog Agent. Inside Compose, OTel is always on.
-- No Datadog dashboard or monitor is versioned in the repo, and nothing exports the SQS queue depth, so
-  there are no alerts for the DLQ or for stuck `PROCESSING` jobs (the expiration routine only logs them).
+- Without a Datadog account there is no telemetry at all, only the pod logs. Nothing automated proves that
+  telemetry, the dashboard or the monitors reach Datadog: the CD has no Agent, and `datadog-apply` is only
+  exercised with `--dry-run`. The monitors notify nobody until someone adds an `@` handle to their `message`.
 - The end-to-end suite and the k6 scenarios run only against a local cluster, not in CI, and the CD smoke
   proves the images start, not the video flow (ADR-007). The CD cluster has no Agent and OTel is off there.
 
