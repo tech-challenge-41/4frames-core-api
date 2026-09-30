@@ -1,0 +1,25 @@
+# Entrada do front: o que não é /api vai para o nginx do front, que devolve o index.html às rotas da SPA.
+#
+# Fica separado do Ingress da API (ingress.yaml) porque o rewrite-target daquele vale para todos os paths do
+# mesmo Ingress, e aqui o caminho precisa chegar inteiro. Já o use-regex de lá vale para o host todo: este /
+# também vira regex (^/). Não há conflito, porque o ingress-nginx ordena os paths do mais longo para o mais
+# curto, e /api(/|$)(.*) é testado antes.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: 4frames-web
+  namespace: 4frames
+  labels:
+    app.kubernetes.io/part-of: 4frames
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  name: http

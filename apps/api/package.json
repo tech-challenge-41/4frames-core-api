@@ -1,0 +1,45 @@
+{
+  "name": "@4frames/api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "API REST do 4Frames: autenticação, jobs de vídeo e URLs pré-assinadas",
+  "main": "dist/main.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "ts-node-dev -r tsconfig-paths/register --respawn --transpile-only src/main.ts",
+    "expire": "ts-node-dev -r tsconfig-paths/register --transpile-only src/cron/main.ts",
+    "build": "tsc && tsc-alias",
+    "type-check": "tsc --noEmit",
+    "start": "node dist/main.js",
+    "start:expire": "node dist/cron/main.js",
+    "test": "jest --coverage",
+    "test:watch": "jest --watch"
+  },
+  "dependencies": {
+    "@4frames/shared": "workspace:*",
+    "@aws-sdk/client-s3": "^3.1119.0",
+    "@aws-sdk/s3-request-presigner": "^3.1119.0",
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.3.1",
+    "jsonwebtoken": "^9.0.2",
+    "pino": "^9.6.0",
+    "pino-http": "^10.4.0",
+    "swagger-ui-express": "^5.0.1",
+    "tsconfig-paths": "^4.2.0",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.5",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/supertest": "^6.0.3",
+    "@types/swagger-ui-express": "^4.1.8",
+    "jest-mock-extended": "^4.0.0",
+    "supertest": "^7.2.2"
+  }
+}

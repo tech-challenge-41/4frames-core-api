@@ -1,0 +1,14 @@
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model users {
+  id         Int          @id @default(autoincrement())
+  email      String       @unique
+  password   String
+  status     UserStatus   @default(ACTIVE)
+  created_at DateTime     @default(now())
+  updated_at DateTime     @updatedAt
+  video_jobs video_jobs[]
+}

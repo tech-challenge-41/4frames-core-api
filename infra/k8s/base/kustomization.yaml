@@ -1,0 +1,40 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: 4frames
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secret.yaml
+  - api-deployment.yaml
+  - api-service.yaml
+  - api-hpa.yaml
+  - ingress.yaml
+  - worker-deployment.yaml
+  - worker-service.yaml
+  - worker-triggerauthentication.yaml
+  - worker-scaledobject.yaml
+  - notifier-deployment.yaml
+  - web-deployment.yaml
+  - web-service.yaml
+  - web-ingress.yaml
+  - migrate-job.yaml
+  - expire-uploads-cronjob.yaml
+
+images:
+  - name: 4frames-api
+    newName: 4frames-api
+    newTag: local
+  - name: 4frames-worker
+    newName: 4frames-worker
+    newTag: local
+  - name: 4frames-notifier
+    newName: 4frames-notifier
+    newTag: local
+  - name: 4frames-web
+    newName: 4frames-web
+    newTag: local
+  - name: 4frames-migrate
+    newName: 4frames-migrate
+    newTag: local

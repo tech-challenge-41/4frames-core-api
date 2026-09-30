@@ -1,0 +1,207 @@
+# Ambiente local do 4Frames (ver README.md).
+#
+#   Tudo no Docker:          docker compose up -d --build
+#   (api, worker, notifier, migrate + postgres, redis, mailpit, localstack)
+#   Apps no host (pnpm dev): docker compose up -d postgres redis mailpit localstack
+#
+# O .env da raiz usa endereços do host (localhost), que servem para os apps rodando com pnpm.
+# Os serviços de app deste arquivo sobrescrevem só os hosts internos (bloco x-container-endpoints),
+# então o mesmo .env funciona nos dois modos.
+
+x-app-build: &app-build
+  context: .
+  dockerfile: apps/api/dev.Dockerfile
+
+x-app-volumes: &app-volumes
+  - .:/repo
+  # node_modules ficam dentro do container: os instalados no Windows/macOS não servem no Linux
+  - /repo/node_modules
+  - /repo/apps/api/node_modules
+  - /repo/apps/worker/node_modules
+  - /repo/apps/notifier/node_modules
+  - /repo/packages/shared/node_modules
+
+x-container-endpoints: &container-endpoints
+  DB_HOST: postgres
+  DB_PORT: '5432'
+  AWS_ENDPOINT_URL: http://localstack:4566
+  # S3_PUBLIC_ENDPOINT_URL não é sobrescrito: a URL assinada é aberta pelo navegador, no host.
+  SQS_QUEUE_URL: http://localstack:4566/000000000000/4frames-video-uploads
+  SQS_DLQ_URL: http://localstack:4566/000000000000/4frames-video-uploads-dlq
+  REDIS_URL: redis://redis:6379
+  # O notifier usa o Mailpit deste Compose (ADR-002 §2.1): o .env aponta para localhost:1025, que
+  # dentro do container é o serviço `mailpit`. Para usar um provedor SMTP externo no Compose,
+  # comente estas duas linhas — aí valem SMTP_HOST/SMTP_PORT do .env.
+  SMTP_HOST: mailpit
+  SMTP_PORT: '1025'
+
+services:
+  # One-shot: aplica migrations e seed antes da API subir.
+  migrate:
+    build: *app-build
+    image: 4frames-core-api-dev
+    command: ['sh', '-c', 'pnpm db:deploy && pnpm db:seed']
+    working_dir: /repo
+    volumes: *app-volumes
+    env_file: .env
+    environment: *container-endpoints
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+
+  api:
+    build: *app-build
+    image: 4frames-core-api-dev
+    command: ['pnpm', '--filter', '@4frames/api', 'dev']
+    working_dir: /repo
+    volumes: *app-volumes
+    ports:
+      - '3000:3000'
+    env_file: .env
+    environment: *container-endpoints
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+
+  # Consome a fila de uploads e a DLQ, extrai os frames com ffmpeg e grava zip, status e eventos.
+  # Roda compilado (sem hot reload): o ts-node-dev sai ao receber SIGTERM sem esperar o processo filho,
+  # e o worker precisa desse sinal para terminar o job atual antes de parar (docker compose stop).
+  # Réplicas e escala automática ficam no cluster (KEDA).
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/dev.Dockerfile
+    image: 4frames-core-api-worker-dev
+    command: ['sh', '-c', 'pnpm --filter @4frames/worker build && exec node apps/worker/dist/main.js']
+    working_dir: /repo
+    # tini como PID 1 repassa o SIGTERM ao node.
+    init: true
+    volumes:
+      - .:/repo
+      - /repo/node_modules
+      - /repo/apps/api/node_modules
+      - /repo/apps/worker/node_modules
+      - /repo/apps/notifier/node_modules
+      - /repo/packages/shared/node_modules
+      # Arquivos temporários de cada job (no cluster, um emptyDir)
+      - /tmp/4frames
+    env_file: .env
+    environment:
+      <<: *container-endpoints
+      WORKER_TMP_DIR: /tmp/4frames
+      # Vários jobs em paralelo no mesmo container (além de `docker compose up --scale worker=N`).
+      WORKER_MAX_PARALLEL_JOBS: ${WORKER_MAX_PARALLEL_JOBS:-${WORKER_CONCURRENCY:-2}}
+      # O migrate já gerou o Prisma Client e compilou o shared; api e worker sobem juntos.
+      SKIP_SHARED_BUILD: '1'
+    # Cobre um job inteiro depois do SIGTERM (WORKER_SHUTDOWN_TIMEOUT_SECONDS fica abaixo disso).
+    stop_grace_period: 10m
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+
+  # Assina jobs.events no Redis e envia e-mail (SMTP do .env) em job.done / job.failed.
+  notifier:
+    build: *app-build
+    image: 4frames-core-api-dev
+    command: ['pnpm', '--filter', '@4frames/notifier', 'dev']
+    working_dir: /repo
+    volumes: *app-volumes
+    env_file: .env
+    environment:
+      <<: *container-endpoints
+      # migrate já gerou o Prisma Client e compilou o shared (mesmo padrão do worker).
+      SKIP_SHARED_BUILD: '1'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+      api:
+        condition: service_started
+      worker:
+        condition: service_started
+
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_DB: ${DB_DATABASE}
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # Progresso dos jobs (cache com TTL) e Pub/Sub de eventos. Efêmero: sem volume.
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # SMTP de desenvolvimento: aceita qualquer e-mail e mostra em http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:v1.31.1
+    ports:
+      - '1025:1025'
+      - '8025:8025'
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: '1'
+      MP_SMTP_AUTH_ALLOW_INSECURE: '1'
+
+  # S3 + SQS. Os scripts de infra/localstack/init rodam a cada start e criam bucket, CORS, filas,
+  # DLQ e a notificação S3 -> SQS. O healthcheck só fica verde depois que todos terminam.
+  localstack:
+    image: localstack/localstack:3.8.1
+    ports:
+      - '4566:4566'
+    environment:
+      SERVICES: s3,sqs
+      AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-4frames-videos}
+      SQS_QUEUE_NAME: 4frames-video-uploads
+      SQS_DLQ_NAME: 4frames-video-uploads-dlq
+      SQS_VISIBILITY_TIMEOUT_SECONDS: ${VISIBILITY_TIMEOUT_SECONDS:-600}
+      SQS_MAX_RECEIVE_COUNT: '3'
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -sf http://localhost:4566/_localstack/init/ready | grep -q "\"completed\": *true"']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    volumes:
+      - localstack_data:/var/lib/localstack
+      - ./infra/localstack/init:/etc/localstack/init/ready.d
+
+volumes:
+  postgres_data:
+    driver: local
+  localstack_data:
+    driver: local

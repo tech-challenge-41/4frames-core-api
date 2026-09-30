@@ -1,0 +1,13 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    # O ingress-nginx (manifesto para kind) escuta nas portas 80 e 443 do nó. No host elas ficam em 8080 e
+    # 8443: a 80 do Windows costuma estar ocupada pelo http.sys.
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 8080
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 8443
+        protocol: TCP

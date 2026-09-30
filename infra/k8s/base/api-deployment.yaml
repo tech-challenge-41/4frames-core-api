@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: 4frames
+  labels:
+    app.kubernetes.io/name: api
+    app.kubernetes.io/part-of: 4frames
+spec:
+  # Sem replicas: quem decide é o HPA (api-hpa.yaml). Um valor aqui voltaria a cada apply.
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: api
+        app.kubernetes.io/part-of: 4frames
+    spec:
+      # Pausa do preStop (5 s) + encerramento da API (API_SHUTDOWN_TIMEOUT_SECONDS, 20 s) + folga. O kubelet só
+      # manda SIGKILL depois disso.
+      terminationGracePeriodSeconds: 35
+      containers:
+        - name: api
+          image: 4frames-api:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: 4frames-config
+            - secretRef:
+                name: 4frames-secret
+          # Quando o pod começa a sair, o Ingress leva alguns segundos para tirá-lo do balanceamento. A pausa
+          # segura o SIGTERM até lá: sem ela, requisições novas chegariam a um servidor que já parou de aceitar.
+          lifecycle:
+            preStop:
+              exec:
+                command: ['sleep', '5']
+          # Liveness e readiness só começam depois da primeira resposta. Num host carregado a API levou 55 s
+          # para escutar a porta, e a liveness matava as réplicas novas do HPA antes disso. Até 150 s (30 × 5 s).
+          startupProbe:
+            httpGet:
+              path: /health-check
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
+          # Readiness: a réplica só recebe tráfego quando Postgres e Redis respondem (cada um com prazo de 2 s).
+          # A liveness fica em /health-check: com o banco fora, reiniciar a API não resolveria nada.
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health-check
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: '1'
+              memory: 512Mi

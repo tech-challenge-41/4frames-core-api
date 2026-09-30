@@ -1,0 +1,51 @@
+
+
+  █ THRESHOLDS 
+
+    checks
+    ✓ 'rate==1' rate=100.00%
+
+    http_req_duration{name:POST /videos}
+    ✓ 'p(95)<5000' p(95)=121.67ms
+
+    http_req_duration{name:POST /videos/:jobId/complete}
+    ✓ 'p(95)<5000' p(95)=151ms
+
+    http_req_duration{name:PUT S3 (URL pré-assinada)}
+    ✓ 'p(95)<120000' p(95)=16.97s
+
+    http_req_failed
+    ✓ 'rate==0' rate=0.00%
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 30      1.718746/s
+    checks_succeeded...: 100.00% 30 out of 30
+    checks_failed......: 0.00%   0 out of 30
+
+    ✓ POST /videos → 201
+    ✓ PUT no S3 → 200
+    ✓ POST /complete → 200 QUEUED
+
+    HTTP
+    http_req_duration.........................: min=29.37ms med=118ms    avg=4.56s    p(95)=16.89s   max=17.02s  
+      { expected_response:true }..............: min=29.37ms med=118ms    avg=4.56s    p(95)=16.89s   max=17.02s  
+      { name:POST /videos }...................: min=29.37ms med=44.38ms  avg=58.24ms  p(95)=121.67ms max=142.23ms
+      { name:POST /videos/:jobId/complete }...: min=33.48ms med=108.54ms avg=101.49ms p(95)=151ms    max=151.93ms
+      { name:PUT S3 (URL pré-assinada) }......: min=7.27s   med=16.15s   avg=13.99s   p(95)=16.97s   max=17.02s  
+    http_req_failed...........................: 0.00%  0 out of 31
+    http_reqs.................................: 31     1.776038/s
+
+    EXECUTION
+    iteration_duration........................: min=7.76s   med=16.57s   avg=14.35s   p(95)=17.28s   max=17.28s  
+    iterations................................: 10     0.572915/s
+    vus.......................................: 5      min=5       max=10
+    vus_max...................................: 10     min=10      max=10
+
+    NETWORK
+    data_received.............................: 16 kB  942 B/s
+    data_sent.................................: 345 MB 20 MB/s
+
+
+

@@ -1,0 +1,38 @@
+# Migrations e seed no cluster, com a imagem 4frames-migrate (packages/shared/Dockerfile). O spec.template de
+# um Job é imutável: o scripts/k8s-local.sh apaga o Job anterior antes de aplicar e espera este terminar antes
+# dos rollouts. Rodar de novo é seguro: o migrate deploy só aplica o que falta, e o seed usa upsert.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+  namespace: 4frames
+  labels:
+    app.kubernetes.io/name: migrate
+    app.kubernetes.io/part-of: 4frames
+spec:
+  backoffLimit: 2
+  # Some sozinho uma hora depois de terminar; até lá, `kubectl -n 4frames logs job/migrate` mostra o resultado.
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: migrate
+        app.kubernetes.io/part-of: 4frames
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: 4frames-migrate:local
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: 4frames-config
+            - secretRef:
+                name: 4frames-secret
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: '1'
+              memory: 512Mi

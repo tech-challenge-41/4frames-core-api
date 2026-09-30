@@ -1,0 +1,3 @@
+# O Prettier já ignora o que está no .gitignore (dist, coverage, client gerado do Prisma).
+# TypeScript e JavaScript são formatados pelo ESLint (eslint-plugin-prettier), não pelo Prettier direto.
+pnpm-lock.yaml

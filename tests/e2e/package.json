@@ -1,0 +1,14 @@
+{
+  "name": "@4frames/e2e",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Teste ponta a ponta contra a stack no cluster local. Não sobe nada: rode ./scripts/k8s-local.sh up antes.",
+  "scripts": {
+    "e2e": "jest",
+    "type-check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
+    "adm-zip": "^0.6.1"
+  }
+}

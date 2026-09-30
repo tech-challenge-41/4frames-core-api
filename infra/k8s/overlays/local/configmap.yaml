@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: 4frames-config
+  namespace: 4frames
+data:
+  # O front do cluster sai pelo Ingress na mesma origem da API (8080) e dispensa CORS; o WEB_APP_URL do link
+  # do e-mail vem do base (http://localhost:8080). A 5173 é o front em modo dev (pnpm dev no
+  # 4frames-web-app) apontando para a API do cluster.
+  CORS_ORIGIN: http://localhost:5173,http://localhost:8080
+  DB_HOST: host.docker.internal
+  AWS_ENDPOINT_URL: http://host.docker.internal:4566
+  SQS_QUEUE_URL: http://host.docker.internal:4566/000000000000/4frames-video-uploads
+  SQS_DLQ_URL: http://host.docker.internal:4566/000000000000/4frames-video-uploads-dlq
+  REDIS_URL: redis://host.docker.internal:6379
+  SMTP_HOST: host.docker.internal

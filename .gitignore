@@ -1,0 +1,12 @@
+.env
+node_modules
+.pnpm-store
+dist
+local
+# A linha acima ignora qualquer pasta "local"; o overlay do Kustomize é versionado.
+!infra/k8s/overlays/local
+.cursor
+coverage/
+*.tsbuildinfo
+
+packages/shared/src/generated

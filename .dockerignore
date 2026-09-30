@@ -1,0 +1,12 @@
+**/node_modules
+**/dist
+**/coverage
+**/*.tsbuildinfo
+packages/shared/src/generated
+.git
+.github
+.husky
+.cursor
+.env
+local
+.pnpm-store
