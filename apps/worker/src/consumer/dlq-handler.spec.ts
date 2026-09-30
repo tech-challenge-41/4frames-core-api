@@ -2,7 +2,7 @@ import { type Message } from '@aws-sdk/client-sqs';
 
 import { createDlqHandler, MAX_REQUEUES } from './dlq-handler';
 import { REQUEUE_COUNT_ATTRIBUTE, type UploadRequeuer } from './upload-requeuer';
-import { createFakeLogger, JOB_ID, s3EventBody, SOURCE_KEY, USER_ID } from '../__tests__/fakes';
+import { createFakeLogger, createFakeMonitoring, JOB_ID, s3EventBody, SOURCE_KEY, USER_ID } from '../__tests__/fakes';
 import { FAILURE_REASONS } from '../processing/errors';
 import { type JobEventPublisher, type VideoJobRepository } from '../processing/ports';
 
@@ -21,6 +21,7 @@ describe('createDlqHandler', () => {
   let repository: jest.Mocked<VideoJobRepository>;
   let publisher: jest.Mocked<JobEventPublisher>;
   let requeuer: jest.Mocked<UploadRequeuer>;
+  let monitoring: ReturnType<typeof createFakeMonitoring>;
   let handler: ReturnType<typeof createDlqHandler>;
 
   beforeEach(() => {
@@ -32,7 +33,8 @@ describe('createDlqHandler', () => {
     };
     publisher = { createProgressReporter: jest.fn(), publishDone: jest.fn(), publishFailed: jest.fn() };
     requeuer = { requeue: jest.fn().mockResolvedValue(undefined) };
-    handler = createDlqHandler({ repository, publisher, requeuer, logger: createFakeLogger() });
+    monitoring = createFakeMonitoring();
+    handler = createDlqHandler({ repository, publisher, requeuer, logger: createFakeLogger(), monitoring });
   });
 
   it('should mark the job FAILED after the retries, publish job.failed and delete the message', async () => {
@@ -44,6 +46,7 @@ describe('createDlqHandler', () => {
       userId: USER_ID,
       reason: FAILURE_REASONS.retriesExhausted
     });
+    expect(monitoring.incrementVideoJobsFailed).toHaveBeenCalledWith('retries_exhausted');
     expect(requeuer.requeue).not.toHaveBeenCalled();
   });
 
@@ -53,6 +56,7 @@ describe('createDlqHandler', () => {
 
     await expect(handler(message(s3EventBody(SOURCE_KEY)))).resolves.toEqual({ action: 'delete' });
     expect(publisher.publishFailed).not.toHaveBeenCalled();
+    expect(monitoring.incrementVideoJobsFailed).not.toHaveBeenCalled();
   });
 
   it('should send an unconfirmed upload back to the uploads queue with the confirmation delay', async () => {

@@ -69,6 +69,31 @@ describe('ExpireAbandonedUploadsUseCase', () => {
     });
   });
 
+  it('should record the stuck PROCESSING count in the metrics on every pass, zero included', async () => {
+    const recordStuckProcessingJobs = jest.fn();
+    const monitored = new ExpireAbandonedUploadsUseCase({
+      videoJobService,
+      logger,
+      uploadUrlExpiresInSeconds: UPLOAD_URL_TTL_SECONDS,
+      monitoring: {
+        enabled: true,
+        incrementVideoJobsCreated: jest.fn(),
+        incrementVideoJobsDone: jest.fn(),
+        incrementVideoJobsFailed: jest.fn(),
+        captureJobProcessingDuration: jest.fn(),
+        recordQueueDepth: jest.fn(),
+        recordStuckProcessingJobs
+      },
+      now: () => NOW
+    });
+
+    await monitored.execute();
+    videoJobService.countProcessingNotUpdatedSince.mockResolvedValue(2);
+    await monitored.execute();
+
+    expect(recordStuckProcessingJobs.mock.calls).toEqual([[0], [2]]);
+  });
+
   it('should stay quiet when there is nothing to expire or to warn about', async () => {
     await expect(useCase.execute()).resolves.toMatchObject({ expired: 0, stuckProcessing: 0 });
 

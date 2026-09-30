@@ -13,7 +13,7 @@ import {
   type VideoProbe
 } from './ports';
 import { ProcessVideoJobUseCase } from './process-video-job.usecase';
-import { createFakeLogger, JOB_ID, SOURCE_KEY, USER_ID } from '../__tests__/fakes';
+import { createFakeLogger, createFakeMonitoring, JOB_ID, SOURCE_KEY, USER_ID } from '../__tests__/fakes';
 
 function buildJob(overrides: Partial<VideoJobSnapshot> = {}): VideoJobSnapshot {
   return { id: JOB_ID, userId: USER_ID, status: 'QUEUED', ...overrides };
@@ -29,6 +29,7 @@ describe('ProcessVideoJobUseCase', () => {
   let zipper: jest.Mocked<FrameZipper>;
   let publisher: jest.Mocked<JobEventPublisher>;
   let reportProgress: jest.Mock;
+  let monitoring: ReturnType<typeof createFakeMonitoring>;
   let clock: number;
   let useCase: ProcessVideoJobUseCase;
 
@@ -37,6 +38,7 @@ describe('ProcessVideoJobUseCase', () => {
     calls = [];
     clock = 0;
     reportProgress = jest.fn();
+    monitoring = createFakeMonitoring();
 
     repository = {
       findById: jest.fn().mockResolvedValue(buildJob()),
@@ -86,6 +88,7 @@ describe('ProcessVideoJobUseCase', () => {
       publisher,
       logger: createFakeLogger(),
       tmpDir,
+      monitoring,
       uploadConfirmation: { waitMs: 3000, pollIntervalMs: 1000, retryDelaySeconds: 30 },
       now: () => clock,
       sleep: async ms => {
@@ -141,6 +144,9 @@ describe('ProcessVideoJobUseCase', () => {
       zipKey: `zips/${USER_ID}/${JOB_ID}.zip`,
       frameCount: 2
     });
+    expect(monitoring.incrementVideoJobsDone).toHaveBeenCalledTimes(1);
+    expect(monitoring.captureJobProcessingDuration).toHaveBeenCalledTimes(1);
+    expect(monitoring.incrementVideoJobsFailed).not.toHaveBeenCalled();
   });
 
   it('should report progress across the pipeline and remove the temporary directory', async () => {
@@ -225,6 +231,7 @@ describe('ProcessVideoJobUseCase', () => {
       userId: USER_ID,
       reason: FAILURE_REASONS.invalidVideo
     });
+    expect(monitoring.incrementVideoJobsFailed).toHaveBeenCalledWith('invalid_video');
     expect(calls).toEqual(['s3:download', 'db:failed', 'redis:failed']);
     expect(repository.markDone).not.toHaveBeenCalled();
     expect(fs.existsSync(path.join(tmpDir, JOB_ID))).toBe(false);
@@ -236,6 +243,7 @@ describe('ProcessVideoJobUseCase', () => {
 
     await expect(useCase.execute({ key: SOURCE_KEY })).resolves.toEqual({ action: 'delete', outcome: 'failed' });
     expect(publisher.publishFailed).not.toHaveBeenCalled();
+    expect(monitoring.incrementVideoJobsFailed).not.toHaveBeenCalled();
   });
 
   it('should fail the job when the source video no longer exists in the bucket', async () => {
@@ -265,5 +273,6 @@ describe('ProcessVideoJobUseCase', () => {
 
     await expect(useCase.execute({ key: SOURCE_KEY })).resolves.toEqual({ action: 'delete', outcome: 'discarded' });
     expect(publisher.publishDone).not.toHaveBeenCalled();
+    expect(monitoring.incrementVideoJobsDone).not.toHaveBeenCalled();
   });
 });

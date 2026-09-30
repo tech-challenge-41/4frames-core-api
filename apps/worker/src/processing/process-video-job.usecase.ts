@@ -6,7 +6,7 @@ import { buildFrameKey, buildZipKey } from '@4frames/shared/jobs';
 import { type Logger } from '@4frames/shared/logger';
 import { type MonitoringMetrics } from '@4frames/shared/monitoring';
 
-import { FAILURE_REASONS, InvalidVideoError, ObjectNotFoundError, toError } from './errors';
+import { failureMetricReason, FAILURE_REASONS, InvalidVideoError, ObjectNotFoundError, toError } from './errors';
 import {
   type FrameExtractor,
   type FrameZipper,
@@ -206,11 +206,12 @@ export class ProcessVideoJobUseCase {
 
       log.warn('Video rejected', { reason: error.reason, details: error.details });
 
+      // Só conta quem gravou o FAILED: uma entrega duplicada de um job que já saiu de PROCESSING não conta de novo.
       if (await repository.markFailed(jobId, error.reason)) {
         await publisher.publishFailed({ jobId, userId, reason: error.reason });
+        this.deps.monitoring?.incrementVideoJobsFailed(failureMetricReason(error.reason));
       }
 
-      this.deps.monitoring?.incrementVideoJobsFailed(error.reason);
       return { action: 'delete', outcome: 'failed' };
     } finally {
       await fs.rm(workDir, { recursive: true, force: true }).catch((error: unknown) => {

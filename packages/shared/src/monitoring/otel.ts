@@ -5,8 +5,7 @@ import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
 import { NodeSDK } from '@opentelemetry/sdk-node';
 
 import { DatadogOTLPExporter, OTLPExporterType } from './datadog-otlp';
-
-export const otelEnabled = (): boolean => process.env.OTEL_ENABLED === 'true';
+import { otelEnabled } from './flags';
 
 let sdkInstance: NodeSDK | undefined;
 
@@ -29,7 +28,15 @@ export async function shutdownOtel(): Promise<void> {
   }
 }
 
-(() => {
+/**
+ * Inicia o SDK quando `OTEL_ENABLED=true`. Quem chama é o `monitoring/load`, importado no topo de cada entrypoint:
+ * a instrumentação automática só alcança os módulos carregados depois dela.
+ */
+export function startOtel(): void {
+  if (sdkInstance !== undefined) {
+    return;
+  }
+
   if (!otelEnabled()) {
     console.log('OpenTelemetry disabled');
     return;
@@ -85,4 +92,4 @@ export async function shutdownOtel(): Promise<void> {
   } catch (error) {
     console.error('Error starting OpenTelemetry:', error);
   }
-})();
+}

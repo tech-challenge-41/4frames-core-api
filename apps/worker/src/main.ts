@@ -1,18 +1,20 @@
 import '@4frames/shared/env/load';
+// Antes de qualquer outro módulo: a instrumentação do OpenTelemetry só alcança o que for carregado depois.
+import '@4frames/shared/monitoring/load';
 
 import fs from 'node:fs/promises';
 
 import { createS3Client, createSqsClient } from '@4frames/shared/aws';
 import { HealthServer } from '@4frames/shared/health';
 import { createLogger, type Logger } from '@4frames/shared/logger';
-import { createMonitoringMetrics } from '@4frames/shared/monitoring';
-import { shutdownOtel } from '@4frames/shared/monitoring/load';
+import { createMonitoringMetrics, shutdownOtel } from '@4frames/shared/monitoring';
 import { prisma } from '@4frames/shared/prisma';
 import { registerGracefulShutdown } from '@4frames/shared/process';
 import { createRedisClient } from '@4frames/shared/redis';
 
 import { parseWorkerEnv } from './config/worker-env';
 import { createDlqHandler } from './consumer/dlq-handler';
+import { type MonitoredQueue, QueueDepthMonitor } from './consumer/queue-depth-monitor';
 import { SqsConsumer } from './consumer/sqs-consumer';
 import { SqsUploadRequeuer } from './consumer/upload-requeuer';
 import { createVideoUploadHandler } from './consumer/video-upload-handler';
@@ -59,6 +61,8 @@ async function bootstrap(): Promise<void> {
   const redis = createRedisClient(env.REDIS_URL, { maxRetriesPerRequest: 1 });
   redis.on('error', error => logger.warn('Redis connection error', { error: error.message }));
 
+  // Uma instância por processo: cada uma registra os próprios gauges.
+  const monitoring = createMonitoringMetrics();
   const repository = new PrismaVideoJobRepository(prisma.video_jobs);
   const publisher = new RedisJobEventPublisher({ redis, logger });
 
@@ -75,7 +79,7 @@ async function bootstrap(): Promise<void> {
     publisher,
     logger,
     tmpDir: env.WORKER_TMP_DIR,
-    monitoring: createMonitoringMetrics()
+    monitoring
   });
 
   const uploadHandler = createVideoUploadHandler({ processVideoJob, bucket: env.S3_BUCKET_NAME, logger });
@@ -101,7 +105,8 @@ async function bootstrap(): Promise<void> {
           repository,
           publisher,
           requeuer: new SqsUploadRequeuer({ sqs, queueUrl: env.SQS_QUEUE_URL }),
-          logger
+          logger,
+          monitoring
         }),
         logger,
         visibilityTimeoutSeconds: DLQ_VISIBILITY_TIMEOUT_SECONDS
@@ -110,6 +115,14 @@ async function bootstrap(): Promise<void> {
   } else {
     logger.warn('SQS_DLQ_URL is not set: jobs whose messages reach the DLQ will not be marked FAILED');
   }
+
+  const monitoredQueues: MonitoredQueue[] = [{ name: 'uploads', url: env.SQS_QUEUE_URL }];
+
+  if (env.SQS_DLQ_URL) {
+    monitoredQueues.push({ name: 'dlq', url: env.SQS_DLQ_URL });
+  }
+
+  const queueDepthMonitor = new QueueDepthMonitor({ sqs, queues: monitoredQueues, monitoring, logger });
 
   const healthServer = new HealthServer({
     port: env.WORKER_HEALTH_PORT,
@@ -122,6 +135,7 @@ async function bootstrap(): Promise<void> {
     logger,
     timeoutMs: env.WORKER_SHUTDOWN_TIMEOUT_SECONDS * 1000,
     onShutdown: async () => {
+      queueDepthMonitor.stop();
       await Promise.all(consumers.map(consumer => consumer.stop()));
       await healthServer.stop();
       await Promise.allSettled([redis.quit(), prisma.$disconnect()]);
@@ -132,6 +146,7 @@ async function bootstrap(): Promise<void> {
   });
 
   await healthServer.start();
+  queueDepthMonitor.start();
 
   Promise.all(consumers.map(consumer => consumer.start())).catch((error: unknown) => {
     logger.error('Worker stopped unexpectedly', toError(error));
