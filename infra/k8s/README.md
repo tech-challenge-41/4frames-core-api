@@ -9,6 +9,8 @@ EKS no ADR-001 (ver ADR-002).
 ```text
 infra/k8s/
   kind-config.yaml   # cluster Kind local: portas 80 e 443 do Ingress publicadas no host em 8080 e 8443
+  datadog-values.yaml  # valores do chart datadog/datadog (Agent por nó, Cluster Agent e kube-state-metrics),
+                       # instalado pelo k8s-local.sh no namespace datadog
   base/              # namespace 4frames, ConfigMap, Secret de desenvolvimento, os Deployments de api, worker,
                      # notifier e front, os dois Ingress, o Job de migrations e o CronJob de expiração
   overlays/local/    # Kind local: infra do Compose no host, Secret gerado do .env
@@ -48,6 +50,12 @@ balanceamento, mas não é reiniciada. Os três têm `startupProbe` de até 150 
 depois da primeira resposta, então uma réplica nova que demora a subir num host carregado não é reiniciada
 antes de ficar pronta.
 
+Os Deployments de api, worker e notifier dão a cada app o próprio `OTEL_SERVICE_NAME`/`DD_SERVICE`
+(`4frames-api`, `4frames-worker`, `4frames-notifier`) e apontam `DD_AGENT_HOST` para o IP do nó
+(`status.hostIP`), onde o Datadog Agent recebe o OTLP na porta 4318. O ConfigMap do `base` deixa o OpenTelemetry
+desligado (`OTEL_ENABLED: 'false'`); o overlay `local` o liga. Ver o
+[ADR-008](../../docs/adr/ADR-008-observabilidade-opentelemetry-datadog.md).
+
 A API sai sem derrubar ninguém num rolling update ou num scale-down do HPA:
 
 1. O `preStop` segura o SIGTERM por 5 s, o tempo de o Ingress tirar o pod do balanceamento.
@@ -80,7 +88,8 @@ acesso do ingress-nginx grava o caminho sem a query string, e a API mascara `?to
 
 ## Cluster local (Kind)
 
-Pré-requisitos: Docker rodando, com Compose v2, [kind](https://kind.sigs.k8s.io/), `kubectl`, `curl` e o
+Pré-requisitos: Docker rodando, com Compose v2, [kind](https://kind.sigs.k8s.io/), `kubectl`, `helm`,
+`envsubst`, `curl`, a `DD_API_KEY` de uma conta do Datadog no `.env` e o
 [`4frames-web-app`](https://github.com/tech-challenge-41/4frames-web-app) clonado ao lado deste repositório,
 de onde sai a imagem do front. `WEB_APP_DIR` aponta para um clone em outro lugar. O passo a passo para uma
 máquina limpa está no [README da raiz](../../README.md#como-rodar-a-solução-completa).
@@ -94,7 +103,8 @@ tem `Dockerfile`, e cria o `.env` a partir do `.env.example` se ele não existir
 na saída:
 
 1. Sobe a infra no Compose (`postgres redis mailpit localstack`) e espera ela ficar saudável. As migrations
-   rodam no cluster (passo 9); o serviço `migrate` do Compose fica para o desenvolvimento no Compose.
+   rodam no cluster (passo 10); o serviço `migrate` do Compose fica para o desenvolvimento no Compose, e o
+   `datadog-agent` do Compose, para os apps fora do cluster.
 2. Cria o cluster `4frames-local` com `infra/k8s/kind-config.yaml`, ou reusa o que já existe.
 3. Detecta o gateway da rede `kind`, que é por onde os pods alcançam as portas publicadas no host. No Linux o
    Kind não resolve `host.docker.internal`. `KIND_HOST_GATEWAY` força outro endereço.
@@ -111,13 +121,16 @@ na saída:
    recebe mais correções de segurança.
 7. Instala o KEDA com versão fixada (`KEDA_VERSION`, padrão `2.16.1`) e grava as credenciais do LocalStack no
    operator: sem elas, o scaler SQS tenta o IMDS da EC2 e falha.
-8. Gera o Secret `4frames-secret` a partir do `.env`, com as mesmas credenciais com que o Compose sobe o
+8. Instala o Datadog Agent com o chart `datadog/datadog` no namespace `datadog`: grava a `DD_API_KEY` do `.env`
+   no Secret `datadog-agent-secret`, preenche `clusterName` e `env` do `datadog-values.yaml` com o `envsubst` e
+   espera o chart ficar pronto (até 8 min). Sem `DD_API_KEY`, o `up` para aqui.
+9. Gera o Secret `4frames-secret` a partir do `.env`, com as mesmas credenciais com que o Compose sobe o
    Postgres. O overlay local não traz o Secret do `base`, então o deploy não o sobrescreve.
-9. Apaga o Job `migrate` anterior, renderiza `overlays/local`, troca `host.docker.internal` pelo gateway
-   detectado e aplica. Espera o Job de migrations e seed terminar, mostrando o log dele se falhar. Se o apply
-   alterou o ConfigMap ou o Secret, reinicia `api`, `worker` e `notifier`, que leem os dois por `envFrom` e só
-   veem valores novos em pods novos. Depois espera os rollouts.
-10. Confere pelo Ingress, como o navegador: `http://localhost:8080/` (front) e
+10. Apaga o Job `migrate` anterior, renderiza `overlays/local`, troca `host.docker.internal` pelo gateway
+    detectado e aplica. Espera o Job de migrations e seed terminar, mostrando o log dele se falhar. Se o apply
+    alterou o ConfigMap ou o Secret, reinicia `api`, `worker` e `notifier`, que leem os dois por `envFrom` e só
+    veem valores novos em pods novos. Depois espera os rollouts.
+11. Confere pelo Ingress, como o navegador: `http://localhost:8080/` (front) e
     `http://localhost:8080/api/ready` (API com Postgres e Redis) respondendo 200, com até 2 minutos de espera.
     Por fim imprime os endereços e o tempo total.
 
@@ -131,10 +144,12 @@ no `kind-config.yaml`, ou que voltou de um reinício do Docker Desktop, aborta c
 | Front em dev | No `4frames-web-app`: `VITE_API_URL=http://localhost:8080/api pnpm dev` → http://localhost:5173 |
 | E-mails      | Mailpit do Compose, http://localhost:8025                                                       |
 | S3 e SQS     | LocalStack do Compose, http://localhost:4566                                                    |
+| Telemetria   | Datadog, https://app.us5.datadoghq.com: APM, Logs e Infrastructure → Kubernetes → Pods          |
 
 ```bash
-./scripts/k8s-local.sh status                                  # pods, services, Ingress, HPA e ScaledObject
-./scripts/k8s-local.sh logs                                    # últimas linhas dos apps, do front e do migrate
+./scripts/k8s-local.sh status                                  # pods, services, Ingress, HPA, ScaledObject e o Agent
+./scripts/k8s-local.sh logs                                    # últimas linhas do Agent, dos apps, do front e do migrate
+kubectl -n datadog get pods                                    # Agent do Datadog (um por nó) e Cluster Agent
 kubectl -n 4frames get pods -l app.kubernetes.io/name=worker -w   # KEDA subindo workers com a fila cheia
 ./scripts/k8s-local.sh down                                    # apaga o cluster; a infra do Compose continua
 ./scripts/k8s-local.sh down --all                              # apaga o cluster e derruba a infra do Compose
@@ -186,7 +201,8 @@ outras, e a expiração usa a imagem da API. O overlay também
 tira o Deployment do front: a imagem `4frames-web` vem do `4frames-web-app`, e este CD não a constrói. Sem ele,
 o pod ficaria em `ErrImagePull`. O Service `web` fica sem endpoints, o que não afeta o smoke. Por fim, a
 readiness da API volta a ser o `/health-check`: sem Postgres, o `/ready` responderia 503 para sempre, e o
-rollout do CD nunca terminaria.
+rollout do CD nunca terminaria. O CD não instala o Datadog Agent, e o overlay `ci` herda do `base` o
+`OTEL_ENABLED: 'false'`: os apps sobem com a telemetria desligada.
 
 ## Deploy de uma tag `release-*` no cluster local
 
