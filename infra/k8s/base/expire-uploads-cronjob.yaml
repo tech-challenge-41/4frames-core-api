@@ -39,6 +39,17 @@ spec:
                     name: 4frames-config
                 - secretRef:
                     name: 4frames-secret
+              # Como nos Deployments: sem o DD_AGENT_HOST, o OTel mandaria para `datadog-agent`, que não existe no
+              # cluster, e a contagem de jobs presos em PROCESSING (gauge do alerta) não chegaria ao Datadog.
+              env:
+                - name: OTEL_SERVICE_NAME
+                  value: 4frames-expire-uploads
+                - name: DD_SERVICE
+                  value: 4frames-expire-uploads
+                - name: DD_AGENT_HOST
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: status.hostIP
               resources:
                 requests:
                   cpu: 10m

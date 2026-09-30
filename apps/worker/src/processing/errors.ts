@@ -13,6 +13,22 @@ export const FAILURE_REASONS = {
     `O vídeo tem ${Math.ceil(durationSeconds)} s e excede o limite de ${maxSeconds} s`
 } as const;
 
+/** O `tooLong` é o único motivo com parte variável: o texto traz a duração do vídeo. */
+const TOO_LONG_REASON = /^O vídeo tem \d+ s e excede o limite de \d+ s$/;
+
+/**
+ * Código do motivo para a tag `reason` das métricas: a chave de `FAILURE_REASONS` em snake_case (`too_long`,
+ * `retries_exhausted`…). O texto não serve de tag: o do `tooLong` criaria uma série por duração. Um motivo fora da
+ * lista vira `other`.
+ */
+export function failureMetricReason(reason: string): string {
+  const code = TOO_LONG_REASON.test(reason)
+    ? 'tooLong'
+    : Object.entries(FAILURE_REASONS).find(([, text]) => text === reason)?.[0];
+
+  return code ? code.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`) : 'other';
+}
+
 /**
  * Falha definitiva causada pelo próprio vídeo: o job vai para FAILED e a mensagem é apagada.
  * Qualquer outro erro é tratado como transiente e a mensagem volta à fila.

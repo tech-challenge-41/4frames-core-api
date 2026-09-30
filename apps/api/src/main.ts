@@ -1,6 +1,8 @@
 import '@4frames/shared/env/load';
+// Antes de qualquer outro módulo: a instrumentação do OpenTelemetry só alcança o que for carregado depois.
+import '@4frames/shared/monitoring/load';
 
-import { shutdownOtel } from '@4frames/shared/monitoring/load';
+import { shutdownOtel } from '@4frames/shared/monitoring';
 import { registerGracefulShutdown } from '@4frames/shared/process';
 
 import { readShutdownTimeouts } from '@/infra/config/shutdown.config';

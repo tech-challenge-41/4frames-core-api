@@ -6,11 +6,12 @@
 #   - Migrations e seed num Job do cluster, antes dos apps
 #   - Front em http://localhost:8080 e API com HPA (metrics-server) em /api, atrás do Ingress (ingress-nginx)
 #   - Worker escalado pelo KEDA pela profundidade da fila SQS
-#   - Datadog Agent no cluster via Helm (visão Kubernetes + OTLP), como no garagio-api
+#   - Com DD_API_KEY no .env: Datadog Agent no cluster via Helm (visão Kubernetes + OTLP), como no garagio-api, e o
+#     OpenTelemetry ligado nos apps. Sem ela, o cluster sobe igual, sem telemetria.
 #
-# Pré-requisitos: Docker rodando, kind, kubectl, helm, curl e o 4frames-web-app clonado ao lado deste repositório
-# (WEB_APP_DIR aponta para outro lugar). Sem .env na raiz, o script cria um a partir do .env.example.
-# O .env precisa de DD_API_KEY para o Agent no Kind.
+# Pré-requisitos: Docker rodando, kind, kubectl, curl e o 4frames-web-app clonado ao lado deste repositório
+# (WEB_APP_DIR aponta para outro lugar); helm e envsubst só com DD_API_KEY. Sem .env na raiz, o script cria um a
+# partir do .env.example.
 #
 # Uso:
 #   ./scripts/k8s-local.sh up          # sobe tudo do zero (ou atualiza o que já está de pé) e confere pelo Ingress
@@ -119,7 +120,7 @@ load_env() {
 }
 
 require_tools() {
-  for bin in docker kind kubectl helm curl envsubst; do
+  for bin in docker kind kubectl curl; do
     if ! command -v "$bin" >/dev/null 2>&1; then
       echo "Erro: $bin não encontrado no PATH" >&2
       exit 1
@@ -259,8 +260,27 @@ install_keda() {
   kubectl rollout status deployment/keda-operator -n keda --timeout=120s
 }
 
+# O Datadog é opcional: só entra com DD_API_KEY no .env. Sem ela, o cluster sobe sem Agent e com o OTel desligado.
+datadog_enabled() {
+  [[ -n "${DD_API_KEY:-}" ]]
+}
+
+require_datadog_tools() {
+  datadog_enabled || return 0
+  for bin in helm envsubst; do
+    if ! command -v "$bin" >/dev/null 2>&1; then
+      echo "Erro: $bin não encontrado no PATH (necessário para o Datadog Agent, porque há DD_API_KEY no .env)." >&2
+      echo "Instale o $bin ou esvazie a DD_API_KEY para subir o cluster sem telemetria." >&2
+      exit 1
+    fi
+  done
+}
+
 install_datadog() {
-  : "${DD_API_KEY:?DD_API_KEY ausente no .env (necessária para o Agent no Kind)}"
+  if ! datadog_enabled; then
+    echo "DD_API_KEY vazia no .env: sem Datadog Agent, e o OpenTelemetry fica desligado nos apps"
+    return 0
+  fi
 
   echo "Instalando Datadog Agent via Helm (namespace $NAMESPACE_DD)"
   kubectl create namespace "$NAMESPACE_DD" --dry-run=client -o yaml | kubectl apply -f -
@@ -313,6 +333,10 @@ apply_app() {
   echo "Aplicando o overlay local (infra do Compose em $gateway)"
   local manifests
   manifests="$(kubectl kustomize "$OVERLAY_DIR" | sed "s/host\.docker\.internal/${gateway}/g")"
+  if ! datadog_enabled; then
+    # Sem Agent no nó, o OTel dos apps só acumularia falhas de exportação.
+    manifests="$(sed -E 's/^([[:space:]]*OTEL_ENABLED:).*/\1 "false"/' <<<"$manifests")"
+  fi
   # Os webhooks de admissão do KEDA e do ingress-nginx podem recusar chamadas por alguns segundos depois
   # que os pods ficam prontos, enquanto o certificado é injetado. O apply é idempotente: tenta de novo.
   for attempt in 1 2 3 4 5; do
@@ -378,6 +402,12 @@ verify_ingress() {
 
 show_validation() {
   local elapsed=$SECONDS
+  local datadog_summary="desligado (sem DD_API_KEY no .env)"
+  if datadog_enabled; then
+    datadog_summary="https://app.us5.datadoghq.com
+              APM > Services (4frames-api, 4frames-worker, 4frames-notifier)
+              Infrastructure > Kubernetes > Pods e o dashboard 4Frames (node scripts/datadog-apply.mjs)"
+  fi
   cat <<MSG
 
 ==> 4Frames no ar em $((elapsed / 60)) min $((elapsed % 60)) s
@@ -387,13 +417,10 @@ show_validation() {
   Swagger:    ${INGRESS_URL}/api/api-docs/
   Mailpit:    http://localhost:8025  (e-mails de conclusão e de falha)
   LocalStack: http://localhost:4566  (S3 e SQS)
-  Datadog:    https://app.us5.datadoghq.com
-              APM > Services (4frames-api / worker / notifier)
-              Infrastructure > Kubernetes > Pods (Agent Helm no Kind)
+  Datadog:    ${datadog_summary}
 
   # Pods, Ingress, HPA, ScaledObject e Agent
   ./scripts/k8s-local.sh status
-  kubectl get pods -n datadog
 
   # Demo de escala: envie vários vídeos e observe o worker
   kubectl -n ${NAMESPACE} get pods -l app.kubernetes.io/name=worker -w
@@ -409,6 +436,7 @@ cmd_up() {
   require_tools
   require_web_app
   load_env
+  require_datadog_tools
 
   step "Infra no Compose: Postgres, Redis, Mailpit e LocalStack"
   up_infra
@@ -431,7 +459,7 @@ cmd_up() {
   step "KEDA (escala do worker pela fila)"
   install_keda
 
-  step "Datadog Agent (Helm — pods na UI Kubernetes)"
+  step "Datadog Agent (Helm, só com DD_API_KEY no .env)"
   install_datadog
 
   step "Deploy: Secret, migrations e seed, apps"

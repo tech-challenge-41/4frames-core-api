@@ -1,3 +1,5 @@
+import { type MonitoringMetrics } from '@4frames/shared/monitoring';
+
 import { type ILogger } from '@/domain/ports/service/logger.interface';
 import { type IVideoJobService } from '@/domain/ports/service/video-job.service.interface';
 import { type IUseCase } from '@/domain/ports/use-case';
@@ -14,6 +16,8 @@ interface ExpireAbandonedUploadsUseCaseDependencies {
   logger: ILogger;
   /** A mesma validade da URL pré-assinada de upload (UPLOAD_URL_TTL_SECONDS). */
   uploadUrlExpiresInSeconds: number;
+  /** Recebe a contagem de jobs presos em PROCESSING a cada passada (gauge para o alerta no Datadog). */
+  monitoring?: MonitoringMetrics;
   now?: () => Date;
 }
 
@@ -25,17 +29,20 @@ export class ExpireAbandonedUploadsUseCase implements IUseCase<void, ExpireAband
   private readonly videoJobService: IVideoJobService;
   private readonly logger: ILogger;
   private readonly uploadUrlExpiresInSeconds: number;
+  private readonly monitoring: MonitoringMetrics | undefined;
   private readonly now: () => Date;
 
   constructor({
     videoJobService,
     logger,
     uploadUrlExpiresInSeconds,
+    monitoring,
     now = () => new Date()
   }: ExpireAbandonedUploadsUseCaseDependencies) {
     this.videoJobService = videoJobService;
     this.logger = logger.child({ component: ExpireAbandonedUploadsUseCase.name });
     this.uploadUrlExpiresInSeconds = uploadUrlExpiresInSeconds;
+    this.monitoring = monitoring;
     this.now = now;
   }
 
@@ -46,6 +53,8 @@ export class ExpireAbandonedUploadsUseCase implements IUseCase<void, ExpireAband
 
     const expired = await this.videoJobService.expireUploadPendingCreatedBefore(createdBefore);
     const stuckProcessing = await this.videoJobService.countProcessingNotUpdatedSince(notUpdatedSince);
+
+    this.monitoring?.recordStuckProcessingJobs(stuckProcessing);
 
     if (expired > 0) {
       this.logger.info('Abandoned uploads expired', { expired, createdBefore: createdBefore.toISOString() });

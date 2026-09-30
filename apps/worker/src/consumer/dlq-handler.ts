@@ -1,9 +1,10 @@
 import { type Logger } from '@4frames/shared/logger';
+import { type MonitoringMetrics } from '@4frames/shared/monitoring';
 
 import { DELETE_MESSAGE, type MessageHandler } from './message-handler';
 import { parseS3EventMessage } from './s3-event';
 import { readRequeueCount, type UploadRequeuer } from './upload-requeuer';
-import { FAILURE_REASONS } from '../processing/errors';
+import { failureMetricReason, FAILURE_REASONS } from '../processing/errors';
 import { type JobEventPublisher, type VideoJobRepository } from '../processing/ports';
 import { DEFAULT_UPLOAD_CONFIRMATION } from '../processing/process-video-job.usecase';
 import { parseJobSourceKey } from '../processing/source-key';
@@ -20,6 +21,7 @@ export interface DlqHandlerDependencies {
   publisher: JobEventPublisher;
   requeuer: UploadRequeuer;
   logger: Logger;
+  monitoring?: MonitoringMetrics;
 }
 
 /**
@@ -29,7 +31,13 @@ export interface DlqHandlerDependencies {
  *   `complete` atrasado. A mensagem volta à fila de uploads, até `MAX_REQUEUES` vezes.
  * A mensagem da DLQ só é apagada depois do reenvio: se ele falhar, o erro devolve a mensagem à DLQ.
  */
-export function createDlqHandler({ repository, publisher, requeuer, logger }: DlqHandlerDependencies): MessageHandler {
+export function createDlqHandler({
+  repository,
+  publisher,
+  requeuer,
+  logger,
+  monitoring
+}: DlqHandlerDependencies): MessageHandler {
   return async message => {
     const event = parseS3EventMessage(message.Body);
 
@@ -88,6 +96,7 @@ export function createDlqHandler({ repository, publisher, requeuer, logger }: Dl
 
       log.error('Job failed after exhausting its retries', undefined, { previousStatus: job.status });
       await publisher.publishFailed({ jobId, userId, reason: FAILURE_REASONS.retriesExhausted });
+      monitoring?.incrementVideoJobsFailed(failureMetricReason(FAILURE_REASONS.retriesExhausted));
     }
 
     if (requeueDelaySeconds !== undefined) {

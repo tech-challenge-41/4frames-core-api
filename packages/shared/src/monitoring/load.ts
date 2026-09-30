@@ -1,7 +1,8 @@
 /**
- * Side-effect entry: start the OpenTelemetry SDK (import after `@4frames/shared/env/load`).
- * Re-exports shutdown helpers for graceful shutdown.
+ * Side-effect entry: inicia o OpenTelemetry. Importe logo depois de `@4frames/shared/env/load` e antes de qualquer
+ * outro módulo (`import '@4frames/shared/monitoring/load';`): a instrumentação automática só alcança o que for
+ * carregado depois. O `shutdownOtel` sai de `@4frames/shared/monitoring`.
  */
-import './otel';
+import { startOtel } from './otel';
 
-export { otelEnabled, shutdownOtel } from './otel';
+startOtel();

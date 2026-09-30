@@ -14,15 +14,15 @@ Um comando sobe tudo num cluster Kubernetes local (Kind):
 - o front e a API atrás do Ingress, com a API escalada pelo HPA;
 - o worker escalado pelo KEDA pela profundidade da fila SQS;
 - o notifier;
-- o Datadog Agent, que recebe traces, logs e métricas dos três apps.
+- opcionalmente, com uma conta no Datadog, o Datadog Agent, que recebe traces, logs e métricas dos três apps.
 
 Postgres, Redis, LocalStack (S3 e SQS) e Mailpit rodam no Docker Compose, fora do cluster, como os serviços gerenciados ficavam fora do EKS no ADR-001.
 
 **Pré-requisitos**
 
-- Docker com Compose v2 e 8 GB de memória ou mais para ele. Em repouso a stack usa cerca de 2,5 GB, medidos antes do Datadog Agent, que pede mais 512 MiB (até 1,25 GiB) fora o Cluster Agent e o kube-state-metrics. No pico, cada worker processa um vídeo com ffmpeg.
-- [kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation), [kubectl](https://kubernetes.io/docs/tasks/tools/), [helm](https://helm.sh/docs/intro/install/), `envsubst`, `curl` e Git. No Windows, rode os comandos no Git Bash, que já traz o `envsubst`.
-- Uma conta no Datadog (site `us5.datadoghq.com`) e a API key dela em `DD_API_KEY` no `.env`. Sem ela, o `up` para no passo do Agent. Ver [DATADOG_README.md](./DATADOG_README.md).
+- Docker com Compose v2 e 8 GB de memória ou mais para ele. Em repouso a stack usa cerca de 2,5 GB; no pico, cada worker processa um vídeo com ffmpeg.
+- [kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation), [kubectl](https://kubernetes.io/docs/tasks/tools/), `curl` e Git. No Windows, rode os comandos no Git Bash.
+- Só para a telemetria, que é opcional: uma conta no Datadog (site `us5.datadoghq.com`) com a API key em `DD_API_KEY` no `.env`, [helm](https://helm.sh/docs/intro/install/) e `envsubst` (o Git Bash já traz). O Agent pede mais 512 MiB (até 1,25 GiB), fora o Cluster Agent e o kube-state-metrics. Ver [DATADOG_README.md](./DATADOG_README.md).
 - Portas livres no host: 8080 e 8443 (Ingress), 5432, 6379, 4566, 1025 e 8025.
 
 Node e pnpm não são necessários: as imagens são construídas dentro do Docker.
@@ -31,11 +31,11 @@ Node e pnpm não são necessários: as imagens são construídas dentro do Docke
 git clone https://github.com/tech-challenge-41/4frames-core-api.git
 git clone https://github.com/tech-challenge-41/4frames-web-app.git
 cd 4frames-core-api
-cp .env.example .env   # e preencha DD_API_KEY
+cp .env.example .env   # opcional: preencha DD_API_KEY para ligar o Datadog
 ./scripts/k8s-local.sh up
 ```
 
-O front é construído a partir do `4frames-web-app` clonado ao lado. Se não houver `.env`, o `up` cria um a partir do `.env.example`, mas ele vem sem a `DD_API_KEY`. Depois ele segue estas etapas, esperando cada uma ficar pronta:
+O front é construído a partir do `4frames-web-app` clonado ao lado. Se não houver `.env`, o `up` cria um a partir do `.env.example`, que vem sem a `DD_API_KEY` e, portanto, sem telemetria. Depois ele segue estas etapas, esperando cada uma ficar pronta:
 
 1. Infra no Compose: Postgres, Redis, Mailpit e LocalStack com bucket, filas e DLQ.
 2. Cluster Kind `4frames-local`, com o Ingress publicado em 8080 e 8443.
@@ -43,22 +43,22 @@ O front é construído a partir do `4frames-web-app` clonado ao lado. Se não ho
 4. metrics-server, para o HPA medir a CPU da API.
 5. ingress-nginx.
 6. KEDA.
-7. Datadog Agent pelo Helm, no namespace `datadog`.
+7. Com `DD_API_KEY` no `.env`, o Datadog Agent pelo Helm, no namespace `datadog`, e o OpenTelemetry ligado nos apps. Sem ela, a etapa é pulada.
 8. Migrations e seed num Job e, depois, os apps.
 9. Verificação pelo Ingress: o front em `/` e a API em `/api/ready`, que só responde 200 com banco e Redis de pé.
 
 A primeira execução baixa as imagens base e constrói tudo, por isso demora mais. As seguintes aproveitam o cache. Rodar o `up` de novo com a stack no ar atualiza o que mudou.
 
-| O quê                   | Onde                                                                            |
-| ----------------------- | ------------------------------------------------------------------------------- |
-| Front                   | http://localhost:8080, com o usuário do seed `admin@admin.com` / `123456`       |
-| API                     | http://localhost:8080/api, com o Swagger em http://localhost:8080/api/api-docs/ |
-| E-mails                 | Mailpit, http://localhost:8025                                                  |
-| S3 e SQS                | LocalStack, http://localhost:4566                                               |
-| Traces, logs e métricas | Datadog, https://app.us5.datadoghq.com: APM, Logs e Infrastructure → Kubernetes |
+| O quê                   | Onde                                                                                                                      |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Front                   | http://localhost:8080, com o usuário do seed `admin@admin.com` / `123456`                                                 |
+| API                     | http://localhost:8080/api, com o Swagger em http://localhost:8080/api/api-docs/                                           |
+| E-mails                 | Mailpit, http://localhost:8025                                                                                            |
+| S3 e SQS                | LocalStack, http://localhost:4566                                                                                         |
+| Traces, logs e métricas | Com `DD_API_KEY`: Datadog, https://app.us5.datadoghq.com (APM, Logs, Infrastructure → Kubernetes e o dashboard "4Frames") |
 
 ```bash
-./scripts/k8s-local.sh status       # pods, Ingress, HPA, ScaledObject e os pods do Datadog Agent
+./scripts/k8s-local.sh status       # pods, Ingress, HPA, ScaledObject e, se houver, os pods do Datadog Agent
 ./scripts/k8s-local.sh logs         # últimas linhas do Agent e de cada app
 ./scripts/k8s-local.sh down         # apaga o cluster; a infra do Compose continua
 ./scripts/k8s-local.sh down --all   # apaga o cluster e derruba a infra do Compose
@@ -100,10 +100,10 @@ Detalhes dos manifestos, do script e do CD: [infra/k8s/README.md](./infra/k8s/RE
 | [ADR-005](./docs/adr/ADR-005-ciclo-de-vida-do-job.md)                  | Estados do job, cancelamento, expiração, falhas, progresso e notificação               |
 | [ADR-006](./docs/adr/ADR-006-autenticacao-e-acesso.md)                 | Login, token, autorização por dono, URLs pré-assinadas e segredos                      |
 | [ADR-007](./docs/adr/ADR-007-qualidade-testes-e-entrega.md)            | Camadas de teste, gates de cobertura, evidências, CI/CD e fluxo de trabalho            |
-| [ADR-008](./docs/adr/ADR-008-observabilidade-opentelemetry-datadog.md) | OpenTelemetry nos apps, Datadog Agent no Compose e no Kind e as métricas do job        |
+| [ADR-008](./docs/adr/ADR-008-observabilidade-opentelemetry-datadog.md) | OpenTelemetry nos apps, Datadog Agent opcional, métricas, dashboard e monitores        |
 
 Além dos ADRs: o [README do Kubernetes](./infra/k8s/README.md) (manifestos, script e CD), o
-[README do Datadog](./DATADOG_README.md) (Agent, variáveis e métricas), as
+[README do Datadog](./DATADOG_README.md) (como ligar, variáveis, métricas, dashboard e monitores), as
 [evidências de carga e escala](./docs/evidence/README.md) e o OpenAPI, servido pela API em `/api-docs`.
 
 ### Scripts de criação dos recursos
@@ -112,22 +112,23 @@ Além dos ADRs: o [README do Kubernetes](./infra/k8s/README.md) (manifestos, scr
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Banco (PostgreSQL)    | Migrations em SQL, aplicadas em ordem por `prisma migrate deploy`: [`packages/shared/prisma/migrations/*/migration.sql`](./packages/shared/prisma/migrations). Usuários de teste: [`packages/shared/prisma/seeds`](./packages/shared/prisma/seeds) |
 | S3 e SQS (LocalStack) | [`infra/localstack/init`](./infra/localstack/init): bucket com CORS, fila com DLQ e a notificação `videos/` → fila                                                                                                                                 |
-| Infraestrutura local  | [`docker-compose.yml`](./docker-compose.yml): Postgres, Redis, LocalStack, Mailpit e o Datadog Agent                                                                                                                                               |
+| Infraestrutura local  | [`docker-compose.yml`](./docker-compose.yml): Postgres, Redis, LocalStack, Mailpit e o Datadog Agent (opcional)                                                                                                                                    |
 | Cluster e aplicação   | [`scripts/k8s-local.sh`](./scripts/k8s-local.sh) e os manifestos em [`infra/k8s`](./infra/k8s), com o Job que aplica migrations e seed no cluster                                                                                                  |
-| Datadog Agent no Kind | Chart `datadog/datadog` pelo Helm, com os valores de [`infra/k8s/datadog-values.yaml`](./infra/k8s/datadog-values.yaml), instalado pelo `k8s-local.sh`                                                                                             |
+| Datadog Agent no Kind | Chart `datadog/datadog` pelo Helm, com os valores de [`infra/k8s/datadog-values.yaml`](./infra/k8s/datadog-values.yaml), instalado pelo `k8s-local.sh` com `DD_API_KEY`                                                                            |
+| Dashboard e monitores | [`infra/datadog`](./infra/datadog), aplicados no Datadog por [`scripts/datadog-apply.mjs`](./scripts/datadog-apply.mjs)                                                                                                                            |
 
 ## Estrutura
 
-| Pacote            | Nome                | O que é                                                                                                                                   |
-| ----------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/api`        | `@4frames/api`      | API REST (Express 5): login JWT, jobs de vídeo e URLs pré-assinadas                                                                       |
-| `apps/worker`     | `@4frames/worker`   | Worker: consome a fila SQS, extrai os frames com ffmpeg, gera o zip e publica o progresso                                                 |
-| `apps/notifier`   | `@4frames/notifier` | Assina `jobs.events`, envia e-mail (Pug + SMTP/Mailpit) e recupera jobs sem `notified_at`                                                 |
-| `packages/shared` | `@4frames/shared`   | Prisma (schema, migrations, seeds e client), env, logger, contratos de job, clientes AWS e Redis, OpenTelemetry e métricas (`monitoring`) |
-| `infra/`          | –                   | LocalStack (`localstack/init`), manifestos Kubernetes com Kustomize (`k8s/`) e os valores do Datadog Agent (`k8s/datadog-values.yaml`)    |
-| `scripts/`        | –                   | `k8s-local.sh`: cluster Kind local com a stack completa                                                                                   |
-| `tests/e2e`       | `@4frames/e2e`      | Teste ponta a ponta contra a stack no cluster (`pnpm test:e2e`)                                                                           |
-| `tests/load`      | –                   | Cenários de carga com o k6 e a escala do worker pelo KEDA, com evidência em `docs/evidence/`                                              |
+| Pacote            | Nome                | O que é                                                                                                                                                                                    |
+| ----------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `apps/api`        | `@4frames/api`      | API REST (Express 5): login JWT, jobs de vídeo e URLs pré-assinadas                                                                                                                        |
+| `apps/worker`     | `@4frames/worker`   | Worker: consome a fila SQS, extrai os frames com ffmpeg, gera o zip e publica o progresso                                                                                                  |
+| `apps/notifier`   | `@4frames/notifier` | Assina `jobs.events`, envia e-mail (Pug + SMTP/Mailpit) e recupera jobs sem `notified_at`                                                                                                  |
+| `packages/shared` | `@4frames/shared`   | Prisma (schema, migrations, seeds e client), env, logger, contratos de job, clientes AWS e Redis, OpenTelemetry e métricas (`monitoring`)                                                  |
+| `infra/`          | –                   | LocalStack (`localstack/init`), manifestos Kubernetes com Kustomize (`k8s/`), os valores do Datadog Agent (`k8s/datadog-values.yaml`) e o dashboard e os monitores do Datadog (`datadog/`) |
+| `scripts/`        | –                   | `k8s-local.sh`: cluster Kind local com a stack completa                                                                                                                                    |
+| `tests/e2e`       | `@4frames/e2e`      | Teste ponta a ponta contra a stack no cluster (`pnpm test:e2e`)                                                                                                                            |
+| `tests/load`      | –                   | Cenários de carga com o k6 e a escala do worker pelo KEDA, com evidência em `docs/evidence/`                                                                                               |
 
 A API segue arquitetura hexagonal em `apps/api/src`: `domain` (ports e erros), `application`
 (use cases e DTOs), `infra` (HTTP, serviços, logging) e `dependencies` (container de DI).
@@ -136,8 +137,8 @@ A API segue arquitetura hexagonal em `apps/api/src`: `domain` (ports e erros), `
 
 - Node.js 24 (ver `.nvmrc`) e pnpm 10
 - Docker
-- Para o cluster local: [kind](https://kind.sigs.k8s.io/), `kubectl`, `helm` e `envsubst`
-- Para a telemetria: `DD_API_KEY` no `.env` (obrigatória no cluster local; ver [DATADOG_README.md](./DATADOG_README.md))
+- Para o cluster local: [kind](https://kind.sigs.k8s.io/) e `kubectl`
+- Para a telemetria, opcional: `DD_API_KEY` no `.env` e, no cluster, `helm` e `envsubst` (ver [DATADOG_README.md](./DATADOG_README.md))
 
 ## Desenvolvimento
 
@@ -156,9 +157,9 @@ docker compose up -d --build
 Sobe Postgres, Redis, Mailpit, LocalStack, o serviço `migrate` (migrations e seed, depois encerra), a
 API em modo desenvolvimento em `http://localhost:3000`, o **worker** (por padrão **2 vídeos em paralelo** no mesmo
 processo via `WORKER_MAX_PARALLEL_JOBS`; use `docker compose up --scale worker=N` para mais réplicas) e o **notifier** (e-mail em
-`job.done`/`job.failed` pelo SMTP do Mailpit, com a caixa em http://localhost:8025) e o **Datadog Agent**
-(`datadog-agent`), para onde os três apps mandam traces, logs e métricas. O Agent precisa da `DD_API_KEY` do `.env`, e
-no Compose o OpenTelemetry fica sempre ligado (ver [DATADOG_README.md](./DATADOG_README.md)).
+`job.done`/`job.failed` pelo SMTP do Mailpit, com a caixa em http://localhost:8025). Com `DD_API_KEY`, `OTEL_ENABLED=true`
+e `COMPOSE_PROFILES=datadog` no `.env`, sobe também o **Datadog Agent** (`datadog-agent`), para onde os três apps mandam
+traces, logs e métricas (ver [DATADOG_README.md](./DATADOG_README.md)).
 
 Para recriar só o notificador após mudanças no código: `docker compose up -d --build notifier`.
 
@@ -177,9 +178,9 @@ pnpm dev:api
   `pnpm --filter @4frames/shared build`, ou deixe `pnpm dev:shared` recompilando em outro terminal.
 - Não rode a API nos dois modos ao mesmo tempo: os dois usam a porta 3000. Para trocar, use
   `docker compose stop api`.
-- O `.env.example` liga o OpenTelemetry (`OTEL_ENABLED=true`) e aponta para o Agent em `localhost:4318`. Suba também o
-  `datadog-agent` ou ponha `OTEL_ENABLED=false` no `.env`. O `.env` traz `OTEL_SERVICE_NAME=4frames-api`; para o worker
-  e o notifier, troque o nome no comando (`OTEL_SERVICE_NAME=4frames-worker pnpm dev:worker`).
+- O `.env.example` deixa o OpenTelemetry desligado. Para ligar, ponha `DD_API_KEY` e `OTEL_ENABLED=true` no `.env` e
+  acrescente `datadog-agent` ao `docker compose up`. O `.env` traz `OTEL_SERVICE_NAME=4frames-api`; para o worker e o
+  notifier, troque o nome no comando (`OTEL_SERVICE_NAME=4frames-worker pnpm dev:worker`).
 
 ### Cluster Kubernetes local (Kind)
 
@@ -199,16 +200,16 @@ Layout dos manifestos, o que o script faz passo a passo e o deploy de uma tag `r
 
 ### Serviços locais
 
-| Serviço       | Endereço                                                                           | Para quê                                         |
-| ------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------ |
-| API           | http://localhost:3000 (`/api-docs`)                                                | REST (Compose ou `pnpm dev:api`)                 |
-| API no Kind   | http://localhost:8080/api (`/api/api-docs/`), pelo Ingress                         | REST no cluster local                            |
-| PostgreSQL    | localhost:5432                                                                     | Banco                                            |
-| LocalStack    | http://localhost:4566                                                              | S3 e SQS                                         |
-| Redis         | localhost:6379                                                                     | Progresso e eventos de job                       |
-| Mailpit       | SMTP em localhost:1025 (`mailpit:1025` no Compose), caixa em http://localhost:8025 | E-mails de desenvolvimento (substitui o SES)     |
-| Notifier      | `GET /healthz` na porta 9100; logs via `docker compose logs -f notifier`           | E-mail ao terminar/falhar job                    |
-| Datadog Agent | OTLP HTTP em localhost:4318 (`datadog-agent:4318` no Compose)                      | Traces, logs e métricas dos apps rumo ao Datadog |
+| Serviço       | Endereço                                                                                  | Para quê                                         |
+| ------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| API           | http://localhost:3000 (`/api-docs`)                                                       | REST (Compose ou `pnpm dev:api`)                 |
+| API no Kind   | http://localhost:8080/api (`/api/api-docs/`), pelo Ingress                                | REST no cluster local                            |
+| PostgreSQL    | localhost:5432                                                                            | Banco                                            |
+| LocalStack    | http://localhost:4566                                                                     | S3 e SQS                                         |
+| Redis         | localhost:6379                                                                            | Progresso e eventos de job                       |
+| Mailpit       | SMTP em localhost:1025 (`mailpit:1025` no Compose), caixa em http://localhost:8025        | E-mails de desenvolvimento (substitui o SES)     |
+| Notifier      | `GET /healthz` na porta 9100; logs via `docker compose logs -f notifier`                  | E-mail ao terminar/falhar job                    |
+| Datadog Agent | OTLP HTTP em localhost:4318 (`datadog-agent:4318` no Compose), só com o profile `datadog` | Traces, logs e métricas dos apps rumo ao Datadog |
 
 ### Comandos (na raiz)
 
@@ -292,20 +293,23 @@ A imagem do worker instala `ffmpeg` (como o projeto base), roda como usuário `n
 
 ## Observabilidade
 
-API, worker e notifier usam o OpenTelemetry e mandam traces, logs do pino e métricas pelo OTLP ao Datadog Agent, que
-repassa ao Datadog (site `us5`). Cada app aparece no APM com o próprio nome: `4frames-api`, `4frames-worker` e
-`4frames-notifier`.
+É opcional: sem conta no Datadog, a solução sobe e funciona igual, sem telemetria. Com a conta, API, worker e notifier
+usam o OpenTelemetry e mandam traces, logs do pino e métricas pelo OTLP ao Datadog Agent, que repassa ao Datadog (site
+`us5`). Cada app aparece no APM com o próprio nome: `4frames-api`, `4frames-worker` e `4frames-notifier`.
 
-| Onde rodam os apps    | Agent                                                                       |
-| --------------------- | --------------------------------------------------------------------------- |
-| No host ou no Compose | Serviço `datadog-agent` do Compose, em `localhost:4318`                     |
-| No Kind               | Instalado pelo `k8s-local.sh` com o Helm, um por nó, no namespace `datadog` |
+| Onde rodam os apps    | Como ligar                                                               | Agent                                                                       |
+| --------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
+| No Kind               | `DD_API_KEY` no `.env`                                                   | Instalado pelo `k8s-local.sh` com o Helm, um por nó, no namespace `datadog` |
+| No host ou no Compose | `DD_API_KEY`, `OTEL_ENABLED=true` e `COMPOSE_PROFILES=datadog` no `.env` | Serviço `datadog-agent` do Compose, em `localhost:4318`                     |
 
-Além dos traces, o worker e a API mandam as métricas do job: `frames.video_jobs.created`, `.done`, `.failed` e
-`.processing_duration` (o `.failed` só conta vídeos rejeitados). No Kind, o Agent também mostra pods e réplicas de API e
-worker. A decisão e os limites estão no
-[ADR-008](./docs/adr/ADR-008-observabilidade-opentelemetry-datadog.md); variáveis, como desligar e onde ver cada coisa,
-no [DATADOG_README.md](./DATADOG_README.md).
+Além dos traces, os apps mandam métricas do job e da fila: jobs criados, concluídos e com falha (com o motivo), o tempo
+de processamento, a profundidade da fila de uploads e da DLQ e os jobs presos em `PROCESSING`. No Kind, o Agent também
+mostra pods e réplicas de API e worker. O dashboard "4Frames" e os monitores (DLQ acumulando, jobs presos e falhas
+depois de 3 tentativas) estão versionados em [`infra/datadog`](./infra/datadog) e vão para o Datadog com
+`node --env-file=.env scripts/datadog-apply.mjs`.
+
+A decisão e os limites estão no [ADR-008](./docs/adr/ADR-008-observabilidade-opentelemetry-datadog.md); como ligar,
+variáveis, métricas e onde ver cada coisa, no [DATADOG_README.md](./DATADOG_README.md).
 
 ## CI/CD (GitHub Actions)
 
@@ -354,7 +358,7 @@ recebe `400`.
 5. Quando `DONE`, `GET /videos/{jobId}/download` devolve uma URL pré-assinada de `GET` para o `.zip`.
 
 O processamento em si é feito pelo worker (ver [Worker](#worker)), e o `apps/notifier` manda o e-mail em
-`job.done`/`job.failed`. Os três apps mandam traces, logs e métricas ao Datadog (ver
+`job.done`/`job.failed`. Com o Datadog ligado, os três apps mandam traces, logs e métricas a ele (ver
 [Observabilidade](#observabilidade)).
 
 ## Worker
