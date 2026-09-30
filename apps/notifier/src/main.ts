@@ -2,6 +2,7 @@ import '@4frames/shared/env/load';
 
 import { HealthServer } from '@4frames/shared/health';
 import { createLogger } from '@4frames/shared/logger';
+import { shutdownOtel } from '@4frames/shared/monitoring/load';
 import { prisma } from '@4frames/shared/prisma';
 import { registerGracefulShutdown } from '@4frames/shared/process';
 
@@ -62,6 +63,7 @@ async function bootstrap(): Promise<void> {
       await subscriber.stop();
       await healthServer.stop();
       await prisma.$disconnect();
+      await shutdownOtel();
     }
   });
 

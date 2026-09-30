@@ -1,5 +1,6 @@
 import '@4frames/shared/env/load';
 
+import { shutdownOtel } from '@4frames/shared/monitoring/load';
 import { prisma } from '@4frames/shared/prisma';
 import { registerGracefulShutdown } from '@4frames/shared/process';
 
@@ -33,6 +34,7 @@ async function bootstrap() {
       await runner.runOnce();
     } finally {
       await prisma.$disconnect();
+      await shutdownOtel();
     }
 
     return;
@@ -43,6 +45,7 @@ async function bootstrap() {
     onShutdown: async () => {
       await runner.stop();
       await prisma.$disconnect();
+      await shutdownOtel();
     }
   });
   runner.start();

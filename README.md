@@ -321,8 +321,8 @@ recebe `400`.
 5. Quando `DONE`, `GET /videos/{jobId}/download` devolve uma URL pré-assinada de `GET` para o `.zip`.
 
 O processamento em si é feito pelo worker (ver [Worker](#worker)), e o `apps/notifier` manda o e-mail em
-`job.done`/`job.failed`. Ainda falta, do ADR-002, a observabilidade — ver
-"Known gaps" no [CLAUDE.md](./CLAUDE.md).
+`job.done`/`job.failed`. Observabilidade local: OpenTelemetry → Datadog Agent — ver
+[DATADOG_README.md](./DATADOG_README.md).
 
 ## Worker
 

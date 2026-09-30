@@ -4,6 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import { buildFrameKey, buildZipKey } from '@4frames/shared/jobs';
 import { type Logger } from '@4frames/shared/logger';
+import { type MonitoringMetrics } from '@4frames/shared/monitoring';
 
 import { FAILURE_REASONS, InvalidVideoError, ObjectNotFoundError, toError } from './errors';
 import {
@@ -46,6 +47,7 @@ export interface ProcessVideoJobDependencies {
   publisher: JobEventPublisher;
   logger: Logger;
   tmpDir: string;
+  monitoring?: MonitoringMetrics;
   uploadConfirmation?: UploadConfirmationOptions;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
@@ -191,7 +193,10 @@ export class ProcessVideoJobUseCase {
       }
 
       await publisher.publishDone({ jobId, userId, zipKey, frameCount });
-      log.info('Processing finished', { frameCount, zipKey, elapsedMs: this.now() - startedAt });
+      const elapsedMs = this.now() - startedAt;
+      this.deps.monitoring?.incrementVideoJobsDone();
+      this.deps.monitoring?.captureJobProcessingDuration(elapsedMs);
+      log.info('Processing finished', { frameCount, zipKey, elapsedMs });
 
       return { action: 'delete', outcome: 'done' };
     } catch (error) {
@@ -205,6 +210,7 @@ export class ProcessVideoJobUseCase {
         await publisher.publishFailed({ jobId, userId, reason: error.reason });
       }
 
+      this.deps.monitoring?.incrementVideoJobsFailed(error.reason);
       return { action: 'delete', outcome: 'failed' };
     } finally {
       await fs.rm(workDir, { recursive: true, force: true }).catch((error: unknown) => {

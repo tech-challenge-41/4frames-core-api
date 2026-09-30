@@ -29,6 +29,15 @@ spec:
                 name: 4frames-config
             - secretRef:
                 name: 4frames-secret
+          env:
+            - name: OTEL_SERVICE_NAME
+              value: 4frames-notifier
+            - name: DD_SERVICE
+              value: 4frames-notifier
+            - name: DD_AGENT_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
           # /healthz só abre depois da assinatura de jobs.events e responde 503 se a conexão com o
           # Redis terminar de vez: sem assinatura, o notifier não recebe evento nenhum.
           # A startupProbe dá até 150 s para a partida (assinatura incluída) antes de a liveness contar.

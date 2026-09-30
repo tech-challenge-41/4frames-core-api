@@ -1,3 +1,5 @@
+import { createMonitoringMetrics } from '@4frames/shared/monitoring';
+
 import { CheckReadinessUseCase } from '@/application/use-case/system/check-readiness/check-readiness.usecase';
 import { AuthenticateUserUseCase } from '@/application/use-case/user/authenticate-user/authenticate-user.usecase';
 import { CancelVideoJobUseCase } from '@/application/use-case/video/cancel-video-job/cancel-video-job.usecase';
@@ -18,6 +20,8 @@ import { VideoJobService } from '@/infra/services/video-job.service';
 import { type Container } from './container';
 
 export async function useCaseDependency(c: Container) {
+  const monitoring = createMonitoringMetrics();
+
   c.register(
     AuthenticateUserUseCase.name,
     new AuthenticateUserUseCase({
@@ -29,7 +33,8 @@ export async function useCaseDependency(c: Container) {
     new CreateVideoJobUseCase({
       videoJobService: c.resolve(VideoJobService.name),
       videoStorageService: c.resolve(S3PresignedUrlService.name),
-      uploadUrlExpiresInSeconds: readUploadUrlTtlSeconds()
+      uploadUrlExpiresInSeconds: readUploadUrlTtlSeconds(),
+      monitoring
     })
   );
   c.register(
