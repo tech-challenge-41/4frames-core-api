@@ -14,3 +14,7 @@ data:
   SQS_DLQ_URL: http://host.docker.internal:4566/000000000000/4frames-video-uploads-dlq
   REDIS_URL: redis://host.docker.internal:6379
   SMTP_HOST: host.docker.internal
+  # OTel ligado; DD_AGENT_HOST vem do status.hostIP nos Deployments (Agent Helm no Kind).
+  OTEL_ENABLED: 'true'
+  DD_ENV: development
+  APP_ENV: development

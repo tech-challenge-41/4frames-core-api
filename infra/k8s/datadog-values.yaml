@@ -1,0 +1,106 @@
+datadog:
+  site: us5.datadoghq.com
+  apiKeyExistingSecret: datadog-agent-secret
+  clusterName: ${EKS_CLUSTER_NAME}
+  tags:
+    - env:${APP_ENV}
+    - service:4frames
+
+  # APM (traces) — recebe OTLP da app no node em hostIP:4318
+  apm:
+    portEnabled: true
+    port: 8126
+
+  # OTLP receiver: a app envia traces/logs/metrics por aqui
+  otlp:
+    receiver:
+      protocols:
+        http:
+          enabled: true
+          endpoint: '0.0.0.0:4318'
+          hostEndpoint: '0.0.0.0:4318'
+        grpc:
+          enabled: true
+          endpoint: '0.0.0.0:4317'
+          hostEndpoint: '0.0.0.0:4317'
+    logs:
+      enabled: true
+    traces:
+      enabled: true
+    metrics:
+      enabled: true
+      # Histograms OTLP (ex.: frames.video_jobs.processing_duration)
+      histograms:
+        mode: distributions
+        send_aggregation_metrics: true
+
+  logs:
+    enabled: true
+    containerCollectAll: false
+    containerCollectUsingFiles: true
+
+  dogstatsd:
+    port: 8125
+    useHostPort: true
+    nonLocalTraffic: true
+
+  kubelet:
+    tlsVerify: false
+
+  processAgent:
+    enabled: true
+    processCollection: true
+
+  containerExclude: 'name:datadog-agent'
+
+  orchestratorExplorer:
+    enabled: true
+
+  networkMonitoring:
+    enabled: false
+
+clusterAgent:
+  enabled: true
+  replicas: 1
+  metricsProvider:
+    enabled: false
+  rbac:
+    create: true
+
+clusterChecksRunner:
+  enabled: false
+
+kubeStateMetricsEnabled: true
+kubeStateMetricsCore:
+  enabled: true
+
+agents:
+  enabled: true
+  useHostNetwork: false
+  containers:
+    agent:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 300m
+          memory: 768Mi
+    processAgent:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          cpu: 100m
+          memory: 256Mi
+    traceAgent:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          cpu: 100m
+          memory: 256Mi
+  tolerations:
+    - operator: Exists

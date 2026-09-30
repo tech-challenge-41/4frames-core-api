@@ -5,6 +5,8 @@ import fs from 'node:fs/promises';
 import { createS3Client, createSqsClient } from '@4frames/shared/aws';
 import { HealthServer } from '@4frames/shared/health';
 import { createLogger, type Logger } from '@4frames/shared/logger';
+import { createMonitoringMetrics } from '@4frames/shared/monitoring';
+import { shutdownOtel } from '@4frames/shared/monitoring/load';
 import { prisma } from '@4frames/shared/prisma';
 import { registerGracefulShutdown } from '@4frames/shared/process';
 import { createRedisClient } from '@4frames/shared/redis';
@@ -72,7 +74,8 @@ async function bootstrap(): Promise<void> {
     zipper: new ArchiverFrameZipper(),
     publisher,
     logger,
-    tmpDir: env.WORKER_TMP_DIR
+    tmpDir: env.WORKER_TMP_DIR,
+    monitoring: createMonitoringMetrics()
   });
 
   const uploadHandler = createVideoUploadHandler({ processVideoJob, bucket: env.S3_BUCKET_NAME, logger });
@@ -124,6 +127,7 @@ async function bootstrap(): Promise<void> {
       await Promise.allSettled([redis.quit(), prisma.$disconnect()]);
       sqs.destroy();
       s3.destroy();
+      await shutdownOtel();
     }
   });
 

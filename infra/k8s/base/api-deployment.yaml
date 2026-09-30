@@ -32,6 +32,16 @@ spec:
                 name: 4frames-config
             - secretRef:
                 name: 4frames-secret
+          env:
+            - name: OTEL_SERVICE_NAME
+              value: 4frames-api
+            - name: DD_SERVICE
+              value: 4frames-api
+            # Agent DaemonSet no nó (Helm) — mesmo padrão do garagio-api.
+            - name: DD_AGENT_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
           # Quando o pod começa a sair, o Ingress leva alguns segundos para tirá-lo do balanceamento. A pausa
           # segura o SIGTERM até lá: sem ela, requisições novas chegariam a um servidor que já parou de aceitar.
           lifecycle:
